@@ -2391,6 +2391,26 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             )
         has_direct_payment_methods = True
 
+    if settings.is_payhot_enabled():
+        for method in settings.get_payhot_methods():
+            label = {
+                'sbp': 'СБП',
+                'card': 'Карта',
+                'sberpay': 'SberPay',
+                'applepay': 'Apple Pay',
+                'googlepay': 'Google Pay',
+                'crypto': 'Криптовалюта',
+            }[method]
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f'💳 {settings.get_payhot_display_name()} — {label}',
+                        callback_data=_build_callback(f'payhot_{method}'),
+                    )
+                ]
+            )
+        has_direct_payment_methods = True
+
     if settings.is_tabpay_card_enabled():
         tabpay_card_name = settings.get_tabpay_card_display_name()
         keyboard.append(

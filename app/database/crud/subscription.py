@@ -1328,7 +1328,10 @@ async def extend_subscription(
     await _lock_subscription_row(db, subscription)
     if not provider_charge:
         from app.services.cispay_recurrent_guard import has_live_cispay
+        from app.services.payhot_recurrent_guard import CONFLICT_MESSAGE, has_live_payhot
 
+        if await has_live_payhot(db, subscription.id):
+            raise ValueError(CONFLICT_MESSAGE)
         if await has_live_cispay(db, subscription.id):
             raise ValueError('Сначала отключите автоплатёж CisPay и дождитесь подтверждения отключения.')
     original_base_gb = max(0, (subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0))

@@ -44,6 +44,12 @@ TABLES = (
 PRODUCT_ID = '6be21df9-0bcd-44ac-9c2c-3be7bc94decc'
 
 
+@pytest.fixture(autouse=True)
+def no_payhot_consent(monkeypatch):
+    """Legacy Lava scenarios have no HOT Pay consent; its guards use PostgreSQL tests."""
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.require_no_payhot', AsyncMock())
+
+
 # ---------------------------------------------------------------- pure logic
 
 

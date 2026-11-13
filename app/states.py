@@ -31,6 +31,7 @@ class SubscriptionStates(StatesGroup):
     confirming_custom_purchase = State()
     entering_tariff_device_limit = State()
     entering_cispay_period = State()
+    entering_payhot_period = State()
 
     # Локальное переименование HWID-устройства (alias). hwid и page/sub_id
     # передаются через state data, чтобы вернуться к ровно тому же списку.
@@ -49,6 +50,7 @@ class GiftActivationStates(StatesGroup):
 
 
 class BalanceStates(StatesGroup):
+    waiting_for_payhot_phone = State()
     waiting_for_antilopay_email = State()
     waiting_for_amount = State()
     waiting_for_pal24_method = State()

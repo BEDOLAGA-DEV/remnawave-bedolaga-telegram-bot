@@ -14,7 +14,7 @@ from enum import Enum
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,6 +32,7 @@ from app.database.models import (
     KassaAiPayment,
     MulenPayPayment,
     Pal24Payment,
+    PayHotPayment,
     PlategaPayment,
     PollResponse,
     PromoCodeUse,
@@ -332,6 +333,9 @@ class BlockedUsersService:
             # user keeps getting charged for a deleted account. This path has
             # no grace-access guard (unlike UserService.delete_user_account), so
             # a plain best-effort cancel loop is enough — no lock to re-acquire.
+            from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+            await stage_payhot_owner_cancellation(db, user.id, reason='account_deleted')
             from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
             from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
@@ -349,6 +353,12 @@ class BlockedUsersService:
             await db.execute(delete(HeleketPayment).where(HeleketPayment.user_id == user.id))
             await db.execute(delete(MulenPayPayment).where(MulenPayPayment.user_id == user.id))
             await db.execute(delete(Pal24Payment).where(Pal24Payment.user_id == user.id))
+            from app.services.payhot_recurrent_guard import ordinary_payhot_invoice_condition
+
+            await db.execute(update(PayHotPayment).where(PayHotPayment.user_id == user.id).values(transaction_id=None))
+            await db.execute(
+                delete(PayHotPayment).where(PayHotPayment.user_id == user.id, ordinary_payhot_invoice_condition())
+            )
             await db.execute(delete(AnorePayment).where(AnorePayment.user_id == user.id))
             await db.execute(delete(WataPayment).where(WataPayment.user_id == user.id))
             await db.execute(delete(PlategaPayment).where(PlategaPayment.user_id == user.id))
@@ -426,6 +436,10 @@ class BlockedUsersService:
                 )
                 return False
 
+            from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+            await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+            await stage_payhot_owner_cancellation(db, user.id, reason='account_blocked')
             user.status = UserStatus.BLOCKED.value
             user.updated_at = datetime.now(tz=UTC)
             await db.commit()

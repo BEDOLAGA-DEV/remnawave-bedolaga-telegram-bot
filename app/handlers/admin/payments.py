@@ -58,6 +58,9 @@ def _method_display(method: PaymentMethod, language: str = 'ru') -> str:
         return settings.get_cispay_display_name()
     if method == PaymentMethod.CASHERA:
         return settings.get_cashera_display_name()
+    if method == PaymentMethod.PAYHOT:
+        return settings.get_payhot_display_name()
+
     if method == PaymentMethod.ANORE:
         return settings.get_anore_display_name()
     if method == PaymentMethod.TABPAY:
@@ -82,6 +85,13 @@ def _status_info(
 
     if record.is_paid:
         return '✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')
+
+    if record.method == PaymentMethod.PAYHOT:
+        if status == 'failed':
+            return '❌', texts.t('ADMIN_PAYMENT_STATUS_FAILED')
+        if status in {'cancelled', 'refunded'}:
+            return '❌', texts.t('ADMIN_PAYMENT_STATUS_CANCELED')
+        return '⏳', texts.t('ADMIN_PAYMENT_STATUS_PENDING')
 
     if record.method == PaymentMethod.PAL24:
         mapping = {
@@ -193,6 +203,10 @@ def _is_checkable(record: PendingPayment) -> bool:
     if not record.is_recent():
         return False
     status = (record.status or '').lower()
+    if record.method == PaymentMethod.PAYHOT:
+        from app.services.payhot_service import CHECKABLE_STATUSES
+
+        return not record.is_paid and status in CHECKABLE_STATUSES
     if record.method == PaymentMethod.PAL24:
         return status in {'new', 'process'}
     if record.method == PaymentMethod.MULENPAY:

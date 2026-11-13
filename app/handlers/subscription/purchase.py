@@ -599,16 +599,22 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     from app.services.cispay_recurrent_guard import has_live_cispay
 
     cispay_recurring = await has_live_cispay(db, subscription.id)
+    from .payhot_recurrent import payhot_menu_rows
+
+    payhot_rows = await payhot_menu_rows(db, db_user, subscription, texts)
+    keyboard = get_subscription_keyboard(
+        db_user.language,
+        has_subscription=True,
+        is_trial=subscription.is_trial,
+        cispay_recurring=cispay_recurring,
+        subscription=subscription,
+        gift_enabled=gift_enabled,
+    )
+    for row in payhot_rows:
+        keyboard.inline_keyboard.insert(0, row)
     await callback.message.edit_text(
         message,
-        reply_markup=get_subscription_keyboard(
-            db_user.language,
-            has_subscription=True,
-            is_trial=subscription.is_trial,
-            cispay_recurring=cispay_recurring,
-            subscription=subscription,
-            gift_enabled=gift_enabled,
-        ),
+        reply_markup=keyboard,
         parse_mode='HTML',
     )
     await callback.answer()
@@ -801,6 +807,18 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
                         provider=settings.get_anore_display_name()
                     ),
                     callback_data='topup_anore',
+                )
+            ]
+        )
+
+    if settings.is_payhot_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_UI_TOPUP_PROVIDER', '💳 Пополнить баланс: {provider}').format(
+                        provider=settings.get_payhot_display_name()
+                    ),
+                    callback_data='topup_payhot',
                 )
             ]
         )
@@ -4667,6 +4685,12 @@ def register_handlers(dp: Dispatcher):
         clear_saved_cart,
         F.data == 'clear_saved_cart',
     )
+
+    from .payhot_recurrent import handle_payhot_recurrent, process_payhot_period, purchase_payhot_from_tariff
+
+    dp.message.register(process_payhot_period, SubscriptionStates.entering_payhot_period)
+    dp.callback_query.register(handle_payhot_recurrent, F.data.startswith('hotrec:'))
+    dp.callback_query.register(purchase_payhot_from_tariff, F.data.startswith('tariff_payhot:'))
 
     from .cispay_recurrent import handle_cispay_recurrent, process_cispay_period, purchase_cispay_from_tariff
 

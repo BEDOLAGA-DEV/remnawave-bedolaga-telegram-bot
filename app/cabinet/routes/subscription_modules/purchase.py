@@ -397,6 +397,9 @@ async def get_purchase_options(
     subscription_id: int | None = None,
 ) -> dict[str, Any]:
     """Get all subscription purchase options (periods, servers, traffic, devices)."""
+    from .payhot_recurrent import payhot_availability
+
+    payhot_policy = await payhot_availability(db, user)
     try:
         settings.get_sales_mode()
 
@@ -478,6 +481,8 @@ async def get_purchase_options(
                 'tariff_switch_downgrade_enabled': settings.TARIFF_SWITCH_DOWNGRADE_ENABLED,
                 # СБП-оформление (Platega recurrent): фронт показывает кнопку
                 # «Оформить с автооплатой СБП» рядом с покупкой с баланса.
+                'payhot_recurrent_enabled': payhot_policy['enabled'],
+                'payhot_recurrent_methods': payhot_policy['methods'],
                 'platega_recurrent_enabled': settings.is_platega_recurrent_enabled(),
                 # Автопродление Lava: фронт показывает переключатель на странице
                 # подписки, если фича включена.
@@ -492,6 +497,8 @@ async def get_purchase_options(
         context = await purchase_service.build_options(db, user, subscription_id=subscription_id)
         payload = context.payload
         payload['sales_mode'] = 'classic'
+        payload['payhot_recurrent_enabled'] = payhot_policy['enabled']
+        payload['payhot_recurrent_methods'] = payhot_policy['methods']
         # Автооплата — свойство системы, а не режима продаж. Без этих признаков
         # кабинет спрашивал состояние автооплаты у каждой подписки и узнавал об
         # отключённой фиче из ответа 403 — по красной строке в консоли на запрос.

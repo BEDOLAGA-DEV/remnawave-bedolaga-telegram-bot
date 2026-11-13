@@ -461,6 +461,7 @@ class MonitoringService:
                 except Exception:
                     await db.rollback()
                     logger.warning('CisPay recurring reconciliation unavailable')
+                await self._reconcile_payhot_subscriptions(db)
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -2912,6 +2913,16 @@ class MonitoringService:
                 {'error': str(e)},
                 is_success=False,
             )
+
+    async def _reconcile_payhot_subscriptions(self, db):
+        # Disabled enrollment must not stop cancellation or already accepted delivery.
+        from app.services.payhot_recurrent_service import reconcile_payhot_agreements
+
+        try:
+            await reconcile_payhot_agreements(db, bot=self.bot)
+        except Exception:
+            await db.rollback()
+            logger.warning('HOT Pay recurring reconciliation unavailable')
 
     async def _reconcile_platega_subscriptions(self, db: AsyncSession):
         """Safety net for Platega SBP-подписок: сверяет локальный статус с

@@ -35,6 +35,7 @@ METHOD_CONFIG_IDS = {
     'cispay_card': 'cispay',
     'cispay_sbp': 'cispay',
     'cispay_crypto': 'cispay',
+    **{f'payhot_{method}': 'payhot' for method in ('card', 'sbp', 'sberpay', 'crypto', 'applepay', 'googlepay')},
     **{f'anore_{method}': 'anore' for method in ('sbp', 'card', 'yoomoney', 'crypto')},
     'tabpay_card': 'tabpay',
     'tabpay_sbp': 'tabpay',

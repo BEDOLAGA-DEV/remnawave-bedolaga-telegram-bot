@@ -159,6 +159,8 @@ def _make_subscription(
 def _make_db() -> SimpleNamespace:
     return SimpleNamespace(
         execute=AsyncMock(),
+        # These identity-transfer scenarios have no unsettled HOT Pay invoices.
+        scalars=AsyncMock(return_value=[]),
         delete=AsyncMock(),
         flush=AsyncMock(),
     )

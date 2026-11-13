@@ -9,6 +9,7 @@ from app.database.models import (
     CasheraSubscription,
     CisPaySubscription,
     LavaSubscription,
+    PayHotAgreement,
     PlategaSubscription,
     Subscription,
     Tariff,
@@ -19,7 +20,10 @@ from app.services.cispay_recurrent import cispay_tariff_terms, get_cispay_recurr
 
 async def _other_recurring(db, subscription_id):
     from app.database.crud.cispay_subscriptions import LIVE_STATUSES
+    from app.services.payhot_recurrent_guard import has_live_payhot
 
+    if await has_live_payhot(db, subscription_id):
+        return True
     for model in (CisPaySubscription, PlategaSubscription, LavaSubscription, CasheraSubscription):
         statuses = LIVE_STATUSES if model is CisPaySubscription else ('PENDING', 'ACTIVE', 'PAST_DUE')
         if await db.scalar(
@@ -58,6 +62,18 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
         )
     if await db.scalar(pending.limit(1)) is not None:
         raise ValueError('recurrent_already_exists')
+    from app.services.payhot_recurrent_guard import LIVE_STATUSES as PAYHOT_LIVE_STATUSES
+
+    payhot_pending = select(PayHotAgreement.id).where(
+        PayHotAgreement.owner_id == user.id, PayHotAgreement.status.in_(PAYHOT_LIVE_STATUSES)
+    )
+    if settings.is_multi_tariff_enabled():
+        payhot_pending = payhot_pending.join(Subscription, Subscription.id == PayHotAgreement.subscription_id).where(
+            Subscription.tariff_id == tariff.id
+        )
+    if await db.scalar(payhot_pending.limit(1)) is not None:
+        raise ValueError('recurrent_already_exists')
+
     target = None
     if subscription_id is not None:
         target = await db.scalar(

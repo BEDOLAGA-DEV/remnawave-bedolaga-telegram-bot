@@ -894,3 +894,13 @@ class TestGiftProvisioningInvariants:
 
                 # Invariant: exactly one provisioning call at claim time
                 mock_prov.assert_awaited_once()
+
+
+@pytest.fixture(autouse=True)
+def no_hotpay_consent_in_legacy_scenarios(monkeypatch):
+    """HOT Pay obligations are independent of these legacy scenarios; covered on PostgreSQL."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_live_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_conflicting_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.stage_payhot_cancellation', AsyncMock())

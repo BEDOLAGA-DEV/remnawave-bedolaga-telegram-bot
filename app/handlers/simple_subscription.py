@@ -382,6 +382,18 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
             ]
         )
 
+    if settings.is_payhot_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_UI_TOPUP_PROVIDER', '💳 Пополнить баланс: {provider}').format(
+                        provider=settings.get_payhot_display_name()
+                    ),
+                    callback_data='topup_payhot',
+                )
+            ]
+        )
+
     if settings.is_wata_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
 

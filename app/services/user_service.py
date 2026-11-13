@@ -845,6 +845,9 @@ class UserService:
             # this flow), and the guard is re-acquired immediately after —
             # closing that window before anything that can't be undone
             # happens.
+            from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+            await stage_payhot_owner_cancellation(db, user.id, reason='account_deleted')
             from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
             from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
@@ -1236,6 +1239,7 @@ class UserService:
                 LavaPayment,
                 OverpayPayment,
                 ParityPayPayment,
+                PayHotPayment,
                 RioPayPayment,
                 RollyPayPayment,
                 SeverPayPayment,
@@ -1254,6 +1258,7 @@ class UserService:
                 DonutPayment,
                 LavaPayment,
                 CisPayPayment,
+                PayHotPayment,
                 AnorePayment,
                 TabPayPayment,
                 ParityPayPayment,
@@ -1264,7 +1269,12 @@ class UserService:
                     async with db.begin_nested():
                         await db.execute(update(model).where(model.user_id == user_id).values(transaction_id=None))
                         await db.flush()
-                        await db.execute(delete(model).where(model.user_id == user_id))
+                        deletion = delete(model).where(model.user_id == user_id)
+                        if model is PayHotPayment:
+                            from app.services.payhot_recurrent_guard import ordinary_payhot_invoice_condition
+
+                            deletion = deletion.where(ordinary_payhot_invoice_condition())
+                        await db.execute(deletion)
                         await db.flush()
                 except Exception as error:
                     logger.error(
