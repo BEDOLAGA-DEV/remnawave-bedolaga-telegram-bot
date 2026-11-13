@@ -225,6 +225,7 @@ def create_unified_app(
         'pal24': settings.is_pal24_enabled(),
         'wata': settings.is_wata_enabled(),
         'anore': settings.is_anore_enabled(),
+        'payhot': settings.is_payhot_enabled(),
         'heleket': settings.is_heleket_enabled(),
         'apple_iap': settings.is_apple_iap_enabled(),
         'freekassa': settings.is_freekassa_enabled(),

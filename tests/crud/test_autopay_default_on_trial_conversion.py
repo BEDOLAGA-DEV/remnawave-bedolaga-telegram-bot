@@ -170,3 +170,4 @@ def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
     from app.services import cispay_recurrent_guard
 
     monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_live_payhot', AsyncMock(return_value=False))

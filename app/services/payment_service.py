@@ -19,6 +19,7 @@ from app.services.cloudpayments_service import CloudPaymentsService
 from app.services.mulenpay_service import MulenPayService
 from app.services.nalogo_service import NaloGoService
 from app.services.pal24_service import Pal24Service
+from app.services.payhot_service import payhot_service
 from app.services.payment import (
     CryptoBotPaymentMixin,
     HeleketPaymentMixin,
@@ -46,6 +47,7 @@ from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
 from app.services.payment.payer_identity import resolve_guest_payer
+from app.services.payment.payhot import PayHotPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.rollypay import RollyPayPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
@@ -829,6 +831,7 @@ class PaymentService(
     CisPayPaymentMixin,
     TabPayPaymentMixin,
     AnorePaymentMixin,
+    PayHotPaymentMixin,
     ParityPayPaymentMixin,
     CasheraPaymentMixin,
 ):
@@ -838,6 +841,7 @@ class PaymentService(
         # Бот нужен для отправки уведомлений и создания звёздных инвойсов.
         self.bot = bot
         self.anore_service = anore_service
+        self.payhot_service = payhot_service
         # Ниже инициализируем службы-обёртки только если соответствующий провайдер включён.
         self.yookassa_service = YooKassaService() if settings.is_yookassa_enabled() else None
         self.stars_service = TelegramStarsService(bot) if bot else None
@@ -894,6 +898,7 @@ class PaymentService(
         description: str,
         purchase_token: str,
         return_url: str,
+        payment_phone: str | None = None,
     ) -> dict[str, Any] | None:
         """Create a payment for a guest (unauthenticated) landing-page purchase.
 
@@ -1497,6 +1502,27 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
                     'provider': 'cashera',
+                }
+            return None
+
+        if _base == 'payhot':
+            if not settings.is_payhot_enabled():
+                return None
+            result = await self.create_payhot_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_type=_option,
+                metadata=guest_metadata,
+                payment_phone=payment_phone,
+            )
+            if result:
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'payhot',
                 }
             return None
 

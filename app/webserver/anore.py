@@ -48,7 +48,8 @@ def register_anore_webhook(router: APIRouter, payment_service) -> None:
 
         try:
             accepted = await _process_payment_service_callback(payment_service, payload, 'process_anore_callback')
-        except AnoreValidationError:
+        except AnoreValidationError as exc:
+            logger.warning('Anore callback rejected', reason=str(exc))
             return JSONResponse({'error': 'Payment validation failed'}, status_code=400)
         except Exception:
             logger.warning('Anore callback processing failed')

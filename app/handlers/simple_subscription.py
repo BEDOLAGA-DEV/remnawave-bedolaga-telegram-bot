@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_happ_download_button_row
+from app.keyboards.inline import add_subscription_mirror_selector, get_happ_download_button_row
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.subscription_purchase_service import SubscriptionPurchaseService
@@ -378,6 +378,18 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
                         provider=settings.get_anore_display_name()
                     ),
                     callback_data='topup_anore',
+                )
+            ]
+        )
+
+    if settings.is_payhot_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_UI_TOPUP_PROVIDER', '💳 Пополнить баланс: {provider}').format(
+                        provider=settings.get_payhot_display_name()
+                    ),
+                    callback_data='topup_payhot',
                 )
             ]
         )
@@ -808,7 +820,11 @@ async def handle_simple_subscription_pay_with_balance(
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
-        await callback.message.edit_text(success_message, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            success_message,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
+            parse_mode='HTML',
+        )
 
         # Отправляем уведомление админам
         try:
@@ -2992,7 +3008,11 @@ async def confirm_simple_subscription_purchase(
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
-        await callback.message.edit_text(success_message, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            success_message,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
+            parse_mode='HTML',
+        )
 
         # Отправляем уведомление админам
         try:

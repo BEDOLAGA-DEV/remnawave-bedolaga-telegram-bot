@@ -373,14 +373,22 @@ def test_every_payment_provider_calls_the_shared_topup_hook():
     payment_dir = Path(__file__).resolve().parents[2] / 'app' / 'services' / 'payment'
     # tribute.py здесь — только создание платежа; зачисление живёт в services/tribute_service.py.
     # payer_identity.py — общий помощник (данные плательщика для шлюзов), не платёжка.
-    skipped = {'__init__.py', 'common.py', 'tribute.py', 'payer_identity.py'}
+    skipped = {'__init__.py', 'common.py', 'tribute.py', 'payer_identity.py', 'payhot_fulfillment.py'}
     providers = sorted(p for p in payment_dir.glob('*.py') if p.name not in skipped)
     extra = [payment_dir.parent / 'tribute_service.py', payment_dir.parent / 'apple_iap.py']
 
+    def has_topup_hook(path):
+        source = path.read_text(encoding='utf-8')
+        if path.name == 'payhot.py':
+            # HOT Pay's durable fulfillment is a separate module. Verify both
+            # the actual delegation and the shared hook in that implementation.
+            return 'await fulfill_payhot_payment(' in source and 'send_cart_notification_after_topup(' in (
+                payment_dir / 'payhot_fulfillment.py'
+            ).read_text(encoding='utf-8')
+        return 'send_cart_notification_after_topup(' in source
+
     missing = [
-        str(path.relative_to(payment_dir.parent.parent))
-        for path in providers + extra
-        if 'send_cart_notification_after_topup(' not in path.read_text(encoding='utf-8')
+        str(path.relative_to(payment_dir.parent.parent)) for path in providers + extra if not has_topup_hook(path)
     ]
 
     assert len(providers) >= 25, providers

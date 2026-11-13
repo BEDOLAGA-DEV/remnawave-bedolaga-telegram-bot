@@ -367,6 +367,12 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
         register_anore_webhook(router, payment_service)
         routes_registered = True
 
+    if settings.is_payhot_configured():
+        from app.webserver.payhot import register_payhot_webhook
+
+        register_payhot_webhook(router, payment_service)
+        routes_registered = True
+
     if settings.is_apple_iap_configured():
         from app.webserver.apple_iap import create_apple_iap_router
 
@@ -2168,6 +2174,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'cispay_enabled': settings.is_cispay_enabled(),
                     'cashera_enabled': settings.is_cashera_enabled(),
                     'anore_enabled': settings.is_anore_enabled(),
+                    'payhot_enabled': settings.is_payhot_enabled(),
                     'tabpay_enabled': settings.is_tabpay_enabled(),
                     'paritypay_enabled': settings.is_paritypay_enabled(),
                 }

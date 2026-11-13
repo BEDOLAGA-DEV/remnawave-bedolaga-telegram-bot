@@ -169,4 +169,9 @@ def no_cispay_in_tariff_mutation_unit_fixture(monkeypatch):
     # These fake subscriptions have no bank agreement. Real active agreements
     # are covered by test_cispay_recurrent_charges_postgres.
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_live_payhot', AsyncMock(return_value=False))
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_conflicting_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        'app.services.cispay_recurrent_guard._has_conflicting_cispay_only', AsyncMock(return_value=False)
+    )

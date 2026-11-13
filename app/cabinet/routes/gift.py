@@ -398,6 +398,7 @@ async def create_gift_purchase(
             payment_service = PaymentService(bot=bot)
             payment_db = _DeferredCommitSession(db)
             payment_result = await payment_service.create_guest_payment(
+                payment_phone=body.payment_phone,
                 db=payment_db,  # type: ignore[arg-type]
                 amount_kopeks=quote.final_price_kopeks,
                 payment_method=body.payment_method,

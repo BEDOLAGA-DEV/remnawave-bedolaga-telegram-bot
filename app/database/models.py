@@ -180,6 +180,7 @@ class PaymentMethod(Enum):
     CISPAY = 'cispay'
     TABPAY = 'tabpay'
     ANORE = 'anore'
+    PAYHOT = 'payhot'
     PARITYPAY = 'paritypay'
     DONUT = 'donut'
     LAVA = 'lava'
@@ -1925,6 +1926,121 @@ class AnorePayment(Base):
     @property
     def is_failed(self) -> bool:
         return self.status == 'expired'
+
+
+class PayHotPayment(Base):
+    """Hosted PayHot invoices; acceptance and money share one transaction."""
+
+    __tablename__ = 'payhot_payments'
+    __table_args__ = (CheckConstraint("amount_kopeks > 0 AND currency = 'RUB'", name='ck_payhot_rub_principal'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    order_id = Column(String(64), unique=True, nullable=False, index=True)
+    payhot_payment_id = Column(String(128), unique=True, nullable=True, index=True)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default='creating')
+    is_paid = Column(Boolean, nullable=False, default=False)
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    request_payload = Column(JSON, nullable=True)
+    fulfillment_state = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+    processed_events = Column(JSON, nullable=True)
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    last_checked_at = Column(AwareDateTime(), nullable=True)
+    next_check_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    user = relationship('User', backref='payhot_payments')
+    transaction = relationship('Transaction', backref='payhot_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return not self.is_paid and self.status not in ('succeeded', 'refunded', 'partially_refunded')
+
+    @property
+    def is_success(self) -> bool:
+        return self.is_paid and self.status == 'succeeded'
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ('failed', 'cancelled')
+
+
+class PayHotAgreement(Base):
+    """Immutable consent identity retained after customer/subscription deletion."""
+
+    __tablename__ = 'payhot_agreements'
+    __table_args__ = (
+        UniqueConstraint('owner_id', 'checkout_id', name='uq_payhot_agreement_checkout'),
+        Index(
+            'uq_payhot_agreement_live_target',
+            'subscription_id',
+            unique=True,
+            postgresql_where=text(
+                "status IN ('CREATING','CREATION_UNKNOWN','PENDING','ACTIVE','PAUSED','CANCEL_PENDING')"
+            ),
+        ),
+    )
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True, index=True)
+    owner_id = Column(Integer, nullable=False)
+    checkout_id = Column(String(128), nullable=False)
+    mandate_id = Column(String(128), unique=True, nullable=True)
+    first_payment_id = Column(Integer, ForeignKey('payhot_payments.id', ondelete='SET NULL'), nullable=True)
+    consent_snapshot = Column(JSON, nullable=False)
+    status = Column(String(32), nullable=False, default='CREATING')
+    cancel_requested_at = Column(AwareDateTime(), nullable=True)
+    next_charge_at = Column(AwareDateTime(), nullable=True)
+    reason = Column(String(64), nullable=True)
+    created_at = Column(AwareDateTime(), nullable=False, default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=False, default=func.now(), onupdate=func.now())
+
+
+class PayHotChargeAttempt(Base):
+    """One immutable provider request per merchant billing cycle."""
+
+    __tablename__ = 'payhot_charge_attempts'
+    __table_args__ = (
+        UniqueConstraint('agreement_id', 'cycle_key', name='uq_payhot_charge_cycle'),
+        UniqueConstraint('agreement_id', 'expected_end_date', name='uq_payhot_charge_boundary'),
+        Index(
+            'uq_payhot_charge_unresolved',
+            'agreement_id',
+            unique=True,
+            postgresql_where=text(
+                "status IN ('RESERVED','UNKNOWN','PROCESSING','REVIEW','REFUND_REVIEW') OR (status = 'SUCCEEDED' AND delivery_completed_at IS NULL)"
+            ),
+        ),
+        CheckConstraint("amount_kopeks > 0 AND currency = 'RUB'", name='ck_payhot_charge_rub_principal'),
+    )
+    id = Column(Integer, primary_key=True)
+    agreement_id = Column(Integer, ForeignKey('payhot_agreements.id', ondelete='RESTRICT'), nullable=False, index=True)
+    cycle_key = Column(String(128), nullable=False)
+    provider_charge_id = Column(String(128), unique=True, nullable=True)
+    idempotency_key = Column(String(128), unique=True, nullable=False)
+    merchant_reference = Column(String(128), unique=True, nullable=False)
+    request_payload = Column(JSON, nullable=False)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    expected_end_date = Column(AwareDateTime(), nullable=False)
+    status = Column(String(32), nullable=False, default='RESERVED')
+    transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True)
+    accepted_at = Column(AwareDateTime(), nullable=True)
+    delivery_completed_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), nullable=False, default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=False, default=func.now(), onupdate=func.now())
 
 
 class TabPayPayment(Base):

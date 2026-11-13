@@ -959,6 +959,20 @@ async def _bind_tariff_purchase_keyboard(
                     )
                 ],
             )
+    if cart['custom_traffic_gb'] is None and type(period) is int and period > 0:
+        from app.services.payhot_recurrent_policy import get_payhot_recurrent_policy
+
+        payhot_policy = await get_payhot_recurrent_policy(db, user=db_user, channel='telegram')
+        if payhot_policy['enabled']:
+            keyboard.inline_keyboard.insert(
+                -1,
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(db_user.language).t('HOTREC_TITLE', 'Автоплатёж HOT Pay'),
+                        callback_data=f'tariff_payhot:{tariff.id}',
+                    )
+                ],
+            )
     token = _saved_tariff_checkout_external_id(db_user.id, cart).rsplit(':', 1)[-1][:24]
     if devices.selectable:
         row = []
@@ -986,6 +1000,7 @@ async def _bind_tariff_purchase_keyboard(
                     'tariff_lava:',
                     'tariff_cashera:',
                     'tariff_cispay:',
+                    'tariff_payhot:',
                 )
             ):
                 button.callback_data += f':{token}'
@@ -5839,6 +5854,34 @@ async def confirm_instant_switch(
             pass
 
 
+async def _add_payhot_restored_purchase_button(keyboard, db_user, db, state, cart, identity):
+    """Offer a new consent screen; restoring a cart never restores bank consent."""
+    if (
+        cart.get('cart_mode') not in ('tariff_purchase', 'daily_tariff_purchase')
+        or cart.get('custom_traffic_gb') is not None
+    ):
+        return
+    if type(cart.get('period_days')) is not int or cart['period_days'] <= 0:
+        return
+    from app.services.payhot_recurrent_policy import get_payhot_recurrent_policy
+    from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
+
+    policy = await get_payhot_recurrent_policy(db, user=db_user, channel='telegram')
+    if not policy['enabled']:
+        return
+    token = _saved_tariff_checkout_external_id(db_user.id, identity).rsplit(':', 1)[-1][:24]
+    await state.update_data(restored_tariff_checkout={'cart': dict(cart), 'identity': dict(identity)})
+    keyboard.inline_keyboard.insert(
+        -1,
+        [
+            InlineKeyboardButton(
+                text=get_texts(db_user.language).t('HOTREC_TITLE', 'Автоплатёж HOT Pay'),
+                callback_data=f'tariff_payhot:{cart["tariff_id"]}:{token}',
+            )
+        ],
+    )
+
+
 async def return_to_saved_tariff_cart(
     callback: types.CallbackQuery,
     state: FSMContext,
@@ -6105,6 +6148,9 @@ async def return_to_saved_tariff_cart(
     if cart_mode == 'daily_tariff_purchase':
         daily_price = cart_data.get('daily_price_kopeks', total_price)
         restored_daily_keyboard = get_daily_tariff_confirm_keyboard(tariff_id, db_user.language)
+        await _add_payhot_restored_purchase_button(
+            restored_daily_keyboard, db_user, db, state, cart_data, checkout_identity
+        )
         if cart_data.get('selected_device_limit') is not None:
             from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
 
@@ -6190,6 +6236,7 @@ async def return_to_saved_tariff_cart(
     else:  # tariff_purchase
         period = int(cart_data.get('period_days', 30))
         confirm_keyboard = get_tariff_confirm_keyboard(tariff_id, period, db_user.language)
+        await _add_payhot_restored_purchase_button(confirm_keyboard, db_user, db, state, cart_data, checkout_identity)
         if custom_traffic_gb is not None or str(period) not in (tariff.period_prices or {}):
             confirm_keyboard.inline_keyboard[0][0].callback_data = f'custom_confirm:{tariff_id}'
         from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id

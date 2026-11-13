@@ -107,7 +107,9 @@ def _valid(user, sub, intent) -> bool:
         and sub.end_date > datetime.now(UTC)
         and (
             sub.end_date == intent.charge_at
-            if str(getattr(intent, 'operation_key', '')).startswith('cispay:payment:')
+            if str(getattr(intent, 'operation_key', '')).startswith(
+                ('cispay:payment:', 'payhot:first:', 'payhot:charge:')
+            )
             else sub.last_daily_charge_at == intent.charge_at
         )
     )

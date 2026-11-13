@@ -33,6 +33,7 @@ from app.database.models import (
     Pal24Payment,
     PartnerApplication,
     PartnerStatus,
+    PayHotPayment,
     PinnedMessage,
     PlategaPayment,
     Poll,
@@ -90,6 +91,7 @@ _PAYMENT_MODELS: tuple[type, ...] = (
     PlategaPayment,
     RioPayPayment,
     SeverPayPayment,
+    PayHotPayment,
     AnorePayment,
     WataPayment,
     YooKassaPayment,
@@ -773,6 +775,11 @@ async def execute_merge(
     from app.services.grace_access_runtime import ensure_no_open_grace_for_users
 
     await ensure_no_open_grace_for_users(db, (primary_user_id, secondary_user_id))
+    from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+    # Consent belongs to the original payer, never silently move a bank mandate.
+    await stage_payhot_owner_cancellation(db, primary_user_id, reason='account_merge')
+    await stage_payhot_owner_cancellation(db, secondary_user_id, reason='account_merge')
 
     oauth_transfers: list[tuple[str, object]] = []
     for field in _OAUTH_FIELDS:
@@ -894,9 +901,33 @@ async def execute_merge(
     # 6. Переназначение транзакций
     await db.execute(update(Transaction).where(Transaction.user_id == secondary.id).values(user_id=primary.id))
 
+    # PayHot financial delivery is durable; transfer its account target in the
+    # same transaction as the invoice owner. Guest targets are purchase IDs.
+    from app.services.payhot_recurrent_guard import ordinary_payhot_invoice_condition
+
+    pending_payhot = await db.scalars(
+        select(PayHotPayment)
+        .where(
+            PayHotPayment.user_id == secondary.id,
+            ordinary_payhot_invoice_condition(),
+            PayHotPayment.is_paid.is_(True),
+            PayHotPayment.fulfillment_state['kind'].as_string() == 'topup',
+            PayHotPayment.fulfillment_state['state'].as_string() != 'done',
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    for payment in pending_payhot:
+        state = dict(payment.fulfillment_state or {})
+        if state.get('target_id') == secondary.id:
+            payment.fulfillment_state = {**state, 'target_id': primary.id}
+
     # 7. Переназначение всех платёжных таблиц
     for payment_model in _PAYMENT_MODELS:
-        await db.execute(update(payment_model).where(payment_model.user_id == secondary.id).values(user_id=primary.id))
+        transfer = update(payment_model).where(payment_model.user_id == secondary.id)
+        if payment_model is PayHotPayment:
+            transfer = transfer.where(ordinary_payhot_invoice_condition())
+        await db.execute(transfer.values(user_id=primary.id))
 
     # 7b. Переназначение saved_payment_methods (FK без ondelete)
     await db.execute(

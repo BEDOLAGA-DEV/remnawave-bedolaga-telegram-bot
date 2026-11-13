@@ -22,6 +22,7 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, TransactionType, User
 from app.keyboards.inline import (
+    add_subscription_mirror_selector,
     get_back_keyboard,
     get_countries_keyboard,
     get_devices_keyboard,
@@ -173,7 +174,7 @@ from .happ import (
     handle_happ_download_platform_choice,
     handle_happ_download_request,
 )
-from .links import handle_connect_subscription, handle_open_subscription_link
+from .links import handle_connect_subscription, handle_open_subscription_link, handle_subscription_mirrors
 from .pricing import _build_subscription_period_prompt, _prepare_subscription_summary
 from .promo import (
     _build_promo_group_discount_text,
@@ -598,16 +599,22 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     from app.services.cispay_recurrent_guard import has_live_cispay
 
     cispay_recurring = await has_live_cispay(db, subscription.id)
+    from .payhot_recurrent import payhot_menu_rows
+
+    payhot_rows = await payhot_menu_rows(db, db_user, subscription, texts)
+    keyboard = get_subscription_keyboard(
+        db_user.language,
+        has_subscription=True,
+        is_trial=subscription.is_trial,
+        cispay_recurring=cispay_recurring,
+        subscription=subscription,
+        gift_enabled=gift_enabled,
+    )
+    for row in payhot_rows:
+        keyboard.inline_keyboard.insert(0, row)
     await callback.message.edit_text(
         message,
-        reply_markup=get_subscription_keyboard(
-            db_user.language,
-            has_subscription=True,
-            is_trial=subscription.is_trial,
-            cispay_recurring=cispay_recurring,
-            subscription=subscription,
-            gift_enabled=gift_enabled,
-        ),
+        reply_markup=keyboard,
         parse_mode='HTML',
     )
     await callback.answer()
@@ -800,6 +807,18 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
                         provider=settings.get_anore_display_name()
                     ),
                     callback_data='topup_anore',
+                )
+            ]
+        )
+
+    if settings.is_payhot_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_UI_TOPUP_PROVIDER', '💳 Пополнить баланс: {provider}').format(
+                        provider=settings.get_payhot_display_name()
+                    ),
+                    callback_data='topup_payhot',
                 )
             ]
         )
@@ -1327,7 +1346,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
 
             await callback.message.edit_text(
                 trial_success_text,
-                reply_markup=connect_keyboard,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
                 parse_mode='HTML',
             )
         else:
@@ -3064,7 +3083,11 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     ]
                 )
 
-            await callback.message.edit_text(success_text, reply_markup=connect_keyboard, parse_mode='HTML')
+            await callback.message.edit_text(
+                success_text,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
+                parse_mode='HTML',
+            )
         else:
             purchase_text = texts.SUBSCRIPTION_PURCHASED
             if discount_note:
@@ -3830,7 +3853,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
 
             await callback.message.edit_text(
                 trial_success_text,
-                reply_markup=connect_keyboard,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
                 parse_mode='HTML',
             )
         else:
@@ -4663,6 +4686,12 @@ def register_handlers(dp: Dispatcher):
         F.data == 'clear_saved_cart',
     )
 
+    from .payhot_recurrent import handle_payhot_recurrent, process_payhot_period, purchase_payhot_from_tariff
+
+    dp.message.register(process_payhot_period, SubscriptionStates.entering_payhot_period)
+    dp.callback_query.register(handle_payhot_recurrent, F.data.startswith('hotrec:'))
+    dp.callback_query.register(purchase_payhot_from_tariff, F.data.startswith('tariff_payhot:'))
+
     from .cispay_recurrent import handle_cispay_recurrent, process_cispay_period, purchase_cispay_from_tariff
 
     dp.message.register(process_cispay_period, SubscriptionStates.entering_cispay_period)
@@ -4730,6 +4759,9 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(handle_happ_download_back, F.data == 'happ_download_back')
 
+    dp.callback_query.register(
+        handle_subscription_mirrors, F.data.startswith('sub_mirrors:') | F.data.startswith('sub_mirror_pick:')
+    )
     dp.callback_query.register(handle_connect_subscription, F.data.startswith('subscription_connect'))
 
     dp.callback_query.register(handle_device_guide, F.data.startswith('device_guide_'))

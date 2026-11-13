@@ -26,6 +26,12 @@ from app.database.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def no_payhot_consent(monkeypatch):
+    """Legacy Platega scenarios have no HOT Pay consent; its guards use PostgreSQL tests."""
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.require_no_payhot', AsyncMock())
+
+
 def _ensure_real_aiosqlite(monkeypatch) -> None:
     """Снять фиктивный sys.modules['aiosqlite'] перед созданием реального engine.
 

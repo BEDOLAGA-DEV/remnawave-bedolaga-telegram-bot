@@ -33,6 +33,7 @@ from app.database.models import (
     OverpayPayment,
     Pal24Payment,
     ParityPayPayment,
+    PayHotPayment,
     PaymentMethod,
     PlategaPayment,
     RioPayPayment,
@@ -1040,6 +1041,39 @@ async def _search_anore(db: AsyncSession, params: SearchParams) -> list[PendingP
     return records
 
 
+async def _search_payhot(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(PayHotPayment).options(selectinload(PayHotPayment.user)).order_by(desc(PayHotPayment.created_at))
+    stmt = _apply_date_filter(stmt, PayHotPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                PayHotPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                PayHotPayment.payhot_payment_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, PayHotPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.PAYHOT,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _search_cispay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = select(CisPayPayment).options(selectinload(CisPayPayment.user)).order_by(desc(CisPayPayment.created_at))
     stmt = _apply_date_filter(stmt, CisPayPayment.created_at, params.cutoff, params.upper_bound)
@@ -1211,6 +1245,7 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.LAVA: _search_lava,
     PaymentMethod.CISPAY: _search_cispay,
     PaymentMethod.CASHERA: _search_cashera,
+    PaymentMethod.PAYHOT: _search_payhot,
     PaymentMethod.ANORE: _search_anore,
     PaymentMethod.TABPAY: _search_tabpay,
     PaymentMethod.PARITYPAY: _search_paritypay,

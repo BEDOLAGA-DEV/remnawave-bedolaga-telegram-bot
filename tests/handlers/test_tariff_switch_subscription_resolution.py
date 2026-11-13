@@ -97,3 +97,7 @@ async def test_switch_resolver_asks_to_choose_when_ambiguous(monkeypatch):
 def _no_existing_cispay_agreement(monkeypatch):
     # These legacy fake-DB scenarios have no bank recurring agreement.
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_conflicting_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        'app.services.cispay_recurrent_guard._has_conflicting_cispay_only', AsyncMock(return_value=False)
+    )

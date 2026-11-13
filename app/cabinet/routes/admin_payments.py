@@ -142,6 +142,14 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status_str, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.PAYHOT:
+        return {
+            'succeeded': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка оплаты'),
+            'cancelled': ('❌', 'Отменено'),
+            'refunded': ('↩️', 'Возвращено'),
+        }.get(status_str, ('⏳', 'Ожидает проверки'))
+
     if record.method == PaymentMethod.ANORE:
         return {
             'new': ('⏳', 'Ожидает оплаты'),
@@ -232,6 +240,11 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status_str in {'new', 'process'}
     if record.method == PaymentMethod.MULENPAY:
         return status_str in {'created', 'processing', 'hold'}
+    if record.method == PaymentMethod.PAYHOT:
+        from app.services.payhot_service import CHECKABLE_STATUSES
+
+        return not record.is_paid and status_str in CHECKABLE_STATUSES
+
     if record.method == PaymentMethod.ANORE:
         return not record.is_paid and status_str == 'new'
     if record.method == PaymentMethod.WATA:

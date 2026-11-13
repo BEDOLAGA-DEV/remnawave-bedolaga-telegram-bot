@@ -29,17 +29,23 @@ def _validate_remote(payment: AnorePayment, data: dict, *, require_order: bool) 
         raise AnoreValidationError('Invalid invoice ID')
     if payment.anore_payment_id and remote_id != payment.anore_payment_id:
         raise AnoreValidationError('Invoice ID mismatch')
-    if (require_order or 'orderId' in data) and data.get('orderId') != payment.order_id:
+    if (require_order or data.get('orderId') is not None) and data.get('orderId') != payment.order_id:
         raise AnoreValidationError('Order mismatch')
+    if not require_order and not payment.anore_payment_id:
+        raise AnoreValidationError('Missing invoice binding')
     if not isinstance(data.get('currency'), str) or data['currency'].upper() != payment.currency:
         raise AnoreValidationError('Currency mismatch')
     try:
-        if parse_rubles_to_kopeks(data.get('amount')) != payment.amount_kopeks:
-            raise AnoreValidationError('Amount mismatch')
-        if 'rubAmount' in data and parse_rubles_to_kopeks(data['rubAmount']) != payment.amount_kopeks:
-            raise AnoreValidationError('Ruble amount mismatch')
+        amount = parse_rubles_to_kopeks(data.get('amount'))
+        rub_amount = parse_rubles_to_kopeks(data['rubAmount']) if 'rubAmount' in data else None
     except ValueError as exc:
         raise AnoreValidationError('Invalid amount') from exc
+    if amount != payment.amount_kopeks:
+        raise AnoreValidationError('Amount mismatch')
+    # Customer-paid fees increase the RUB total, not the invoice principal.
+    # Never credit that total or accept a different invoice amount.
+    if rub_amount is not None and rub_amount < payment.amount_kopeks:
+        raise AnoreValidationError('Ruble amount below invoice')
     if data.get('status') not in ('new', 'paid', 'expired'):
         raise AnoreValidationError('Invalid status')
     if 'paid' in data and (type(data['paid']) is not bool or data['paid'] != (data['status'] == 'paid')):
@@ -114,6 +120,22 @@ class AnorePaymentMixin:
             if payment_method_type not in methods:
                 return None
             methods = [payment_method_type]
+        payer = user
+        payment_email = email.strip() if email else None
+        purchase_token = (metadata or {}).get('purchase_token')
+        if purchase_token:
+            # Guest checkout can pass an uncommitted purchase with autoflush
+            # disabled. Read its contact before committing the invoice below.
+            await db.flush()
+            purchase = await db.scalar(select(GuestPurchase).where(GuestPurchase.token == purchase_token))
+            # A gift's user_id belongs to its recipient, never to its payer.
+            payer = await db.get(User, purchase.buyer_user_id) if purchase and purchase.buyer_user_id else None
+            if not payment_email and purchase and purchase.contact_type == 'email':
+                payment_email = purchase.contact_value.strip() or None
+        if not payment_email and payer:
+            payment_email = (payer.email or '').strip() or None
+            if not payment_email and payer.telegram_id and payer.telegram_id > 0:
+                payment_email = f'{payer.telegram_id}@telegram.org'
         local = await create_record(
             db,
             user_id=user_id,
@@ -136,7 +158,7 @@ class AnorePaymentMixin:
                 description=description,
                 order_id=local.order_id,
                 methods=methods,
-                email=email,
+                email=payment_email,
                 success_url=success_url,
                 fail_url=failure_url,
                 callback_url=callback_url,
@@ -192,7 +214,18 @@ class AnorePaymentMixin:
     async def _accept_anore_state(self, db: AsyncSession, data: dict, *, require_order: bool) -> bool:
         followup = None
         try:
-            payment = await db.scalar(select(AnorePayment).where(AnorePayment.order_id == data.get('orderId')))
+            has_order = data.get('orderId') is not None
+            if has_order:
+                if not isinstance(data['orderId'], str) or not 1 <= len(data['orderId']) <= 128:
+                    raise AnoreValidationError('Invalid order ID')
+                payment = await db.scalar(select(AnorePayment).where(AnorePayment.order_id == data['orderId']))
+            else:
+                remote_id = data.get('id')
+                if not isinstance(remote_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', remote_id):
+                    raise AnoreValidationError('Invalid invoice ID')
+                # Only a previously bound unique provider ID can replace an
+                # absent order ID. Never bind an unknown/early invoice this way.
+                payment = await db.scalar(select(AnorePayment).where(AnorePayment.anore_payment_id == remote_id))
             if payment is None:
                 raise AnoreValidationError('Unknown order')
             # Account merge locks users before provider rows. Follow the same order.
@@ -212,7 +245,7 @@ class AnorePaymentMixin:
             )
             if payment.user_id != owner_id:
                 raise RuntimeError('Invoice owner changed; retry acceptance')
-            remote_id = _validate_remote(payment, data, require_order=require_order)
+            remote_id = _validate_remote(payment, data, require_order=require_order and has_order)
             payment.anore_payment_id = remote_id
             delivery = data.get('_delivery_id')
             events = list(payment.processed_events or [])
@@ -331,9 +364,9 @@ class AnorePaymentMixin:
                 seconds = min(exc.retry_after, int((datetime.max.replace(tzinfo=UTC) - now).total_seconds()) - 1)
                 payment.next_check_at = max(payment.next_check_at, now + timedelta(seconds=seconds))
             await db.commit()
-        except AnoreValidationError:
+        except AnoreValidationError as exc:
             await db.rollback()
-            logger.warning('Anore status rejected', local_payment_id=local_id)
+            logger.warning('Anore status rejected', local_payment_id=local_id, reason=str(exc))
         payment = await db.get(AnorePayment, local_id, populate_existing=True)
         return _status(payment) if payment else None
 

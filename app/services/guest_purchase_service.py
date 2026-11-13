@@ -2040,6 +2040,7 @@ async def _find_succeeded_provider_payment(
         KassaAiPayment,
         MulenPayPayment,
         Pal24Payment,
+        PayHotPayment,
         PlategaPayment,
         RioPayPayment,
         SeverPayPayment,
@@ -2104,6 +2105,15 @@ async def _find_succeeded_provider_payment(
             AnorePayment.is_paid.is_(True),
             AnorePayment.is_test.is_(False),
             AnorePayment.anore_payment_id.is_not(None),
+        ]
+
+    elif base_method == 'payhot':
+        model = PayHotPayment
+        # Guest creation and callbacks identify PayHot purchases by local order.
+        payment_id_attr = 'order_id'
+        extra_conditions = [
+            PayHotPayment.is_paid.is_(True),
+            PayHotPayment.payhot_payment_id.is_not(None),
         ]
     elif base_method == 'wata':
         model = WataPayment
