@@ -46,9 +46,11 @@ async def has_conflicting_payhot(db, *, user_id: int, subscription_id: int) -> b
     return await db.scalar(query.limit(1)) is not None
 
 
-async def require_no_payhot(db, *, user_id: int, subscription_id: int):
+async def require_no_payhot(db, *, user_id: int, subscription_id: int, lock_user: bool = True):
+    """Reject live billing; unlocked preflight must be rechecked before mutation."""
     # Enrollment uses the same account lock. Feature flags never suppress old obligations.
-    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    if lock_user:
+        await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
     if await has_conflicting_payhot(db, user_id=user_id, subscription_id=subscription_id):
         raise ValueError(CONFLICT_MESSAGE)
 
