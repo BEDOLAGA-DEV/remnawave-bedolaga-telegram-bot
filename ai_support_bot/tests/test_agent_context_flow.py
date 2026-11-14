@@ -1145,8 +1145,9 @@ async def test_paid_but_inactive_access_requests_receipt_not_connect_button(flow
     assert not result['escalate']
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'happ')
-    assert 'чек или выписку' in result['answer']
-    assert not result['answer'].startswith('Здравствуйте')
+    assert result['answer'] == agent_mod.NOTICE
+    assert result['escalate']
+    assert result['escalation_reason'] == 'repeated_answer'
 
 
 @pytest.mark.asyncio
@@ -1167,7 +1168,7 @@ async def test_active_paid_access_does_not_demand_unnecessary_receipt(flow, monk
 async def test_receipt_for_paid_access_is_not_requested_twice(flow, monkeypatch):
     from ai_support_bot.app.services import dialogue_tools
     captured, agent_mod, Session = flow
-    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'ok', 'active_paid_subscription': False}))
     async with Session() as db:
         await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатила, включите впн')
     captured['responses'] = [
@@ -1240,7 +1241,7 @@ async def test_greeting_returns_after_day_without_losing_case_context(flow):
 async def test_semantic_paid_access_tool_checks_arbitrary_wording(flow, monkeypatch):
     from ai_support_bot.app.services import dialogue_tools
     captured, agent_mod, Session = flow
-    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'ok', 'active_paid_subscription': False}))
     captured['responses'] = [_tool_reply('check_paid_access', {}), {'content': 'Просто включите приложение.'}]
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Заказ завершён, а услуга всё ещё не появилась')
@@ -1280,7 +1281,7 @@ async def test_wheel_request_with_foreign_email_keeps_account_scope(flow, monkey
 async def test_cannot_provide_receipt_for_paid_access_hands_off(flow, monkeypatch):
     from ai_support_bot.app.services import dialogue_tools
     _, agent_mod, Session = flow
-    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'ok', 'active_paid_subscription': False}))
     async with Session() as db:
         await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
     async with Session() as db:
@@ -1293,16 +1294,17 @@ async def test_cannot_provide_receipt_for_paid_access_hands_off(flow, monkeypatc
 async def test_paid_access_short_question_keeps_case_and_receipt_request(flow, monkeypatch):
     from ai_support_bot.app.services import dialogue_tools
     _, agent_mod, Session = flow
-    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'ok', 'active_paid_subscription': False}))
     async with Session() as db:
-        await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
+        first = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
         original = await agent_mod.crud.get_or_create_conversation(db, 4242)
         original_id = original.id
+    assert 'чек или выписку' in first['answer']
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как включить?')
         current = await agent_mod.crud.get_or_create_conversation(db, 4242)
     assert current.id == original_id
-    assert 'чек или выписку' in result['answer']
+    assert result['escalation_reason'] == 'repeated_answer'
 
 
 @pytest.mark.asyncio
@@ -1348,7 +1350,7 @@ async def test_foreign_payment_screenshot_cannot_renew_own_active_subscription(f
     for question in ('Текущая подписка продлится на 3 месяца?', 'К ней 3 проплаченных месяца добавятся?'):
         async with Session() as db:
             result = await agent_mod.support_agent.generate_answer(db, 4242, question)
-        assert 'другой VPN-сервис' in result['answer']
+        assert result['escalation_reason'] == 'repeated_answer'
         assert 'уже добавлены' not in result['answer']
     assert 'foreign' in captured['prompts'][-1]
 

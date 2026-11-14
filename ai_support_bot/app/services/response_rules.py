@@ -331,6 +331,19 @@ def repeated_clarification(answer: str, question: str, history: list) -> bool:
     return len(current) >= 60 and len(previous) == 2 and all(SequenceMatcher(None, current, old).ratio() >= 0.9 for old in previous)
 
 
+def repeated_answer(answer: str, question: str, history: list) -> bool:
+    """One earlier identical reply in the dialogue is enough: the user did not move the case forward."""
+    if re.search(r'повтор|ещ[её] раз|продублир', question, re.IGNORECASE):
+        return False
+
+    def normalized(text):
+        words = re.findall(r'[а-яёa-z0-9]+', unescape(re.sub(r'<[^>]*>', '', text)).casefold())
+        return ' '.join(words[1:] if words[:1] == ['здравствуйте'] else words)
+
+    current = normalized(answer)
+    return bool(current) and any(normalized(item.content or '') == current for item in history if item.role == 'assistant')
+
+
 def handoff_answer(reason: str, question: str) -> str:
     if reason == 'partnership':
         return 'Спасибо за предложение о сотрудничестве! Передаю его команде, пожалуйста, подождите.'

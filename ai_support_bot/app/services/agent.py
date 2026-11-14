@@ -47,6 +47,7 @@ from ai_support_bot.app.services.response_rules import (
     manual_review_followup,
     paid_access_request,
     payment_next_step,
+    repeated_answer,
     repeated_clarification,
     repeated_diagnostics,
     smalltalk_answer,
@@ -389,6 +390,10 @@ class SupportAgent:
         kb_min_chars = settings_store.get_int('KB_MIN_QUESTION_CHARS') or 6
 
         conversation = await crud.get_or_create_conversation(db, telegram_id)
+        state_ttl = settings_store.get_int('STATE_TTL_HOURS')
+        last_activity = await crud.last_activity_at(db, conversation.id) if state_ttl > 0 else None
+        if last_activity and datetime.now(UTC) - last_activity >= timedelta(hours=state_ttl):
+            conversation = await crud.start_conversation(db, telegram_id)
         summary = conversation.summary
         support_state = dict(conversation.support_state or {})
         if support_state.get('issue') == 'payment_missing':
@@ -429,7 +434,7 @@ class SupportAgent:
         forced_reason = mandatory_handoff(question, history)
         if pricing_question:
             support_state['_tariff_question'] = True
-        if not forced_reason and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
+        if not forced_reason and not pricing_question and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
             support_state['renewal_verification'] = True
             support_state['issue'] = 'payment_activation'
         if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
@@ -643,12 +648,16 @@ class SupportAgent:
             escalation_reason = 'wheel_reward_review' if escalate else None
             if escalate:
                 forced_reason = escalation_reason
-        if not forced_reason and not smalltalk and support_state.get('issue') == 'payment_activation':
+        templated = False
+        if not forced_reason and not smalltalk and not pricing_question and support_state.get('issue') == 'payment_activation':
             access = support_state.get('_access_result')
             if access is None:
                 await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
                 access = support_state['_access_result']
-            if not access.get('active_paid_subscription') and not escalate:
+            if access.get('status') != 'ok' and not escalate:
+                answer_text, escalate, forced_reason = NOTICE, True, 'payment_review'
+            elif not access.get('active_paid_subscription') and not escalate:
+                templated = True
                 if support_state.get('receipt_reported'):
                     answer_text, escalate = payment_next_step(support_state)
                 else:
@@ -657,8 +666,10 @@ class SupportAgent:
                                    'Данные карты и остальные операции можно скрыть. Повторно оплачивать не нужно.')
         if not forced_reason and not direct_answer and support_state.get('issue') == 'payment_missing':
             answer_text, escalate = payment_next_step(support_state)
+            templated = True
         if not forced_reason and not smalltalk and support_state.get('renewal_verification'):
             answer_text, escalate = renewal_verification_answer(support_state.get('service_source'), support_state)
+            templated = True
             if escalate:
                 forced_reason = 'payment_review'
         answer_text = deduplicate_answer(strip_escalation_marker(answer_text))
@@ -673,6 +684,10 @@ class SupportAgent:
         if not escalate and repeated_clarification(answer_text, question, history):
             escalation_reason = 'repeated_clarification'
             answer_text, escalate = NOTICE, True
+        if not escalate and templated and repeated_answer(answer_text, question, history):
+            escalation_reason = 'repeated_answer'
+            answer_text, escalate = NOTICE, True
+            logger.info('Repeated templated answer replaced with handoff', telegram_id=telegram_id)
         if not answer_text:
             answer_text = NOTICE
             escalate = True
@@ -740,7 +755,7 @@ class SupportAgent:
             await summary_service.maybe_summarize(db, conversation)
 
         history_limit = settings_store.get_int('HISTORY_LIMIT') or 100
-        await crud.prune_messages(db, history_limit)
+        await crud.prune_messages(db, telegram_id, history_limit, conversation.id if conversation.escalated else None)
         await db.commit()
 
         return {

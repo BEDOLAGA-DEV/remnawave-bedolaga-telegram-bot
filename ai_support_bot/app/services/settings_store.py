@@ -24,6 +24,7 @@ def _base_defaults() -> dict[str, Any]:
         'MIN_SCORE': str(settings.MIN_SCORE),
         'CONTEXT_MESSAGES': str(settings.CONTEXT_MESSAGES),
         'HISTORY_LIMIT': str(settings.HISTORY_LIMIT),
+        'STATE_TTL_HOURS': str(settings.STATE_TTL_HOURS),
         'DAILY_MESSAGE_LIMIT': str(settings.DAILY_MESSAGE_LIMIT),
         'THROTTLE_SECONDS': str(settings.THROTTLE_SECONDS),
         'RESPONSE_CACHE_TTL': str(settings.RESPONSE_CACHE_TTL),
