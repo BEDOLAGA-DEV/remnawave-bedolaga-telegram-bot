@@ -1,13 +1,14 @@
+import asyncio
 import math
 import time
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db import crud, database as db_module
-from ai_support_bot.app.db.models import KnowledgeChunk
+from ai_support_bot.app.db.models import KnowledgeChunk, KnowledgeSource
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.knowledge_parser import build_chunks, compute_content_hash, parse_knowledge_file
 from ai_support_bot.app.services.openai_client import OpenAIError, openai_client
@@ -16,6 +17,7 @@ from ai_support_bot.app.services.openai_client import OpenAIError, openai_client
 logger = structlog.get_logger(__name__)
 
 _EMBED_BATCH_SIZE = 64
+# Как часто сверять подпись базы знаний; куски перечитываются, только если она изменилась.
 _CHUNK_CACHE_TTL = 120
 
 try:
@@ -66,29 +68,48 @@ class _EmbeddingCache:
 
 
 class _ChunkMatrixCache:
+    """Куски базы знаний для поиска в памяти.
+
+    Векторы живут только в нормированной матрице numpy, в rows — тексты для ответа.
+    Базу знаний меняет и админка основного бота (другой процесс), поэтому раз в
+    _CHUNK_CACHE_TTL секунд кэш сверяет её подпись и продлевается без перечитывания,
+    если подпись та же.
+    """
+
     def __init__(self) -> None:
-        self._created = 0.0
+        self._checked = 0.0
         self._rows: list[dict] | None = None
         self._matrix = None
+        self._signature: tuple | None = None
 
     def invalidate(self) -> None:
-        self._created = 0.0
+        self._checked = 0.0
         self._rows = None
         self._matrix = None
+        self._signature = None
 
     def get(self):
-        if self._rows is None or time.time() - self._created > _CHUNK_CACHE_TTL:
+        if self._rows is None or time.time() - self._checked > _CHUNK_CACHE_TTL:
             return None, None
         return self._rows, self._matrix
 
-    def set(self, rows: list[dict], matrix) -> None:
+    def confirm(self, signature: tuple | None) -> bool:
+        if self._rows is None or signature is None or signature != self._signature:
+            return False
+        self._checked = time.time()
+        return True
+
+    def set(self, rows: list[dict], matrix, signature: tuple | None) -> None:
         self._rows = rows
         self._matrix = matrix
-        self._created = time.time()
+        self._signature = signature
+        self._checked = time.time()
 
 
 _embedding_cache = _EmbeddingCache()
 _chunk_cache = _ChunkMatrixCache()
+# Один перечитыватель на процесс: одновременные вопросы не грузят базу знаний дважды.
+_chunk_refresh_lock = asyncio.Lock()
 
 
 class RAGService:
@@ -235,32 +256,83 @@ class RAGService:
             if float(row['score']) >= min_score
         ]
 
+    async def _knowledge_signature(self, db: AsyncSession) -> tuple | None:
+        """Дешёвая подпись базы знаний: меняется при загрузке, удалении и переключении источника.
+
+        Куски считаются по индексу source_id, сами векторы не читаются.
+        """
+        active = KnowledgeSource.is_active.is_(True)
+        active_chunks = KnowledgeChunk.source_id.in_(select(KnowledgeSource.id).where(active))
+        statement = select(
+            select(func.count(KnowledgeChunk.id)).where(active_chunks).scalar_subquery(),
+            select(func.max(KnowledgeChunk.id)).where(active_chunks).scalar_subquery(),
+            select(func.count(KnowledgeSource.id)).scalar_subquery(),
+            select(func.sum(KnowledgeSource.id)).where(active).scalar_subquery(),
+            select(func.max(KnowledgeSource.updated_at)).scalar_subquery(),
+        )
+        try:
+            result = await db.execute(statement)
+            return tuple(result.one())
+        except Exception as error:
+            logger.warning('Failed to read knowledge base signature', error=str(error))
+            return None
+
+    async def _read_chunk_matrix(self, db: AsyncSession) -> tuple[list[dict], object]:
+        chunks = await crud.get_active_chunks(db)
+        rows: list[dict] = []
+        vectors: list[list[float]] = []
+        for chunk in chunks:
+            if not chunk.embedding:
+                continue
+            rows.append({'question': chunk.question, 'answer': chunk.answer, 'content': chunk.content})
+            vectors.append(chunk.embedding)
+        del chunks
+
+        if _np is not None and vectors and all(len(vector) == len(vectors[0]) for vector in vectors):
+            matrix = _np.asarray(vectors, dtype=_np.float32)
+            # Списки Python занимают в ~8 раз больше матрицы — отпускаем их до нормировки.
+            del vectors
+            norms = _np.linalg.norm(matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            matrix /= norms
+            return rows, matrix
+
+        # Запасной путь (нет numpy или разная размерность): векторы нужны в Python.
+        for row, vector in zip(rows, vectors):
+            row['embedding'] = vector
+        return rows, None
+
+    async def _get_chunk_matrix(self, db: AsyncSession) -> tuple[list[dict], object]:
+        rows, matrix = _chunk_cache.get()
+        if rows is not None:
+            return rows, matrix
+
+        async with _chunk_refresh_lock:
+            rows, matrix = _chunk_cache.get()
+            if rows is not None:
+                return rows, matrix
+
+            signature = await self._knowledge_signature(db)
+            if _chunk_cache.confirm(signature):
+                return _chunk_cache.get()
+
+            # Сначала отпускаем старый кэш, чтобы не держать в памяти два сразу.
+            _chunk_cache.invalidate()
+            started = time.monotonic()
+            rows, matrix = await self._read_chunk_matrix(db)
+            _chunk_cache.set(rows, matrix, signature)
+            logger.info(
+                'knowledge chunks loaded',
+                chunks=len(rows),
+                vectorized=matrix is not None,
+                elapsed_ms=round((time.monotonic() - started) * 1000, 1),
+            )
+            return rows, matrix
+
     async def _retrieve_in_memory(
         self, db: AsyncSession, query_embedding: list[float], top_k: int, min_score: float
     ) -> list[dict]:
-        rows, matrix = _chunk_cache.get()
-        if rows is None:
-            chunks = await crud.get_active_chunks(db)
-            rows = [
-                {
-                    'question': chunk.question,
-                    'answer': chunk.answer,
-                    'content': chunk.content,
-                    'embedding': chunk.embedding or [],
-                }
-                for chunk in chunks
-                if chunk.embedding
-            ]
-            matrix = None
-            if _np is not None and rows:
-                dims = len(rows[0]['embedding'])
-                usable = [row for row in rows if len(row['embedding']) == dims]
-                if len(usable) == len(rows):
-                    matrix = _np.asarray([row['embedding'] for row in rows], dtype=_np.float32)
-                    norms = _np.linalg.norm(matrix, axis=1, keepdims=True)
-                    norms[norms == 0] = 1.0
-                    matrix = matrix / norms
-            _chunk_cache.set(rows, matrix)
+        rows, matrix = await self._get_chunk_matrix(db)
 
         if not rows:
             return []
