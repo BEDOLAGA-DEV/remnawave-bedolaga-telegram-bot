@@ -22,9 +22,14 @@ _WRAPPED = re.compile(r'<tg-emoji emoji-id="\d+">(.*?)</tg-emoji>', re.DOTALL)
 _LINE_START = re.compile(r'(?m)^([ \t]*(?:(?:[-•*]|\d+[.)])[ \t]+)?(?:<[bi]>)?)(' + _EMOJI + r')️?[ \t]*')
 
 
+def unwrap(text: str) -> str:
+    """Premium emoji back to their plain fallback characters."""
+    return _WRAPPED.sub(r'\1', text or '')
+
+
 def decorate(text: str, lead: str | None = None, plain: bool = False) -> str:
     """Turn line-leading emoji from the set into premium ones; extra and, for plain answers, all of them are dropped."""
-    text = _WRAPPED.sub(r'\1', text or '')
+    text = unwrap(text)
     if lead in CUSTOM_EMOJI and not plain and text.strip() and not _LINE_START.match(text.lstrip('\n')):
         text = f'{lead} {text.lstrip()}'
     used: list[str] = []

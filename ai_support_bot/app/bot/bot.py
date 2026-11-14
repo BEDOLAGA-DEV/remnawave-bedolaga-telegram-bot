@@ -29,6 +29,7 @@ from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.database import AsyncSessionLocal
 from ai_support_bot.app.services import alerting, business_control, settings_store
 from ai_support_bot.app.services.agent import support_agent
+from ai_support_bot.app.services.emoji_style import unwrap
 from ai_support_bot.app.services.openai_client import OpenAIError
 
 
@@ -334,6 +335,13 @@ async def _answer_safely(message: Message, text: str) -> bool:
     try:
         await message.answer(text, parse_mode='HTML')
     except TelegramBadRequest as error:
+        # Premium emoji are allowed only in the bot's own chats; on behalf of a business
+        # account Telegram may refuse them, so the plain fallback characters go instead.
+        if '<tg-emoji' in text and 'parse entities' not in str(error).lower():
+            if not await _turn_active():
+                return False
+            await message.answer(unwrap(text), parse_mode='HTML')
+            return True
         if 'parse entities' not in str(error).lower():
             raise
         if not await _turn_active():

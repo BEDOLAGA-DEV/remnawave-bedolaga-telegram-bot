@@ -1,3 +1,5 @@
+import pytest
+
 from ai_support_bot.app.services.emoji_style import CUSTOM_EMOJI, decorate
 from ai_support_bot.app.services.telegram_html import sanitize_telegram_html
 
@@ -39,3 +41,20 @@ def test_decorate_is_idempotent_and_survives_sanitizing():
 
 def test_sanitizer_drops_emoji_ids_outside_the_set():
     assert sanitize_telegram_html('<tg-emoji emoji-id="123">😀</tg-emoji> текст') == '😀 текст'
+
+
+@pytest.mark.asyncio
+async def test_refused_premium_emoji_are_resent_as_plain(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from ai_support_bot.app.bot import bot as bot_mod
+
+    monkeypatch.setattr(bot_mod, '_turn_active', AsyncMock(return_value=True))
+    message = AsyncMock()
+    message.answer.side_effect = [TelegramBadRequest(method=None, message='Bad Request: custom emoji not allowed'), None]
+    text = decorate('Передаю обращение команде.', lead='🎧')
+
+    assert await bot_mod._answer_safely(message, text)
+    assert message.answer.await_args_list[1].args[0] == '🎧 Передаю обращение команде.'
