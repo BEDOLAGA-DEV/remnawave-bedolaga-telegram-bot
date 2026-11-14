@@ -534,6 +534,7 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             'wheel_reward_review': 'не удалось подтвердить доступный личный промокод из колеса',
             'payment_review': 'требуется ручная проверка оплаты и доступа по подписке',
             'repeated_clarification': 'ИИ повторяет один уточняющий вопрос без продвижения обращения',
+            'repeated_answer': 'ИИ повторяет тот же ответ без продвижения обращения',
         }.get(result.get('escalation_reason'), reason)
         notify_text = (
             '⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n'
