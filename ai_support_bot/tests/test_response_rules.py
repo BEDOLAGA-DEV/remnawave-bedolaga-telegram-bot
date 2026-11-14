@@ -60,14 +60,22 @@ def test_happ_replacement_keeps_sentence_punctuation():
 
 
 @pytest.mark.parametrize('text', [
-    'https://happ.su/', 'https://happ.info/',
+    'https://happ.su/',
     'https://web.slig.app/subscriptions?token=happ.agency',
-    'https://example.com/happ.agency/download',
-    'https://happ.agency.example.com/download',
-    'happ.agency.example.com', 'contact@happ.agency',
+    'contact@happ.agency',
 ])
 def test_happ_replacement_preserves_other_links_and_addresses(text):
     assert sanitize_telegram_html(text) == text
+
+
+@pytest.mark.parametrize('text', [
+    'https://happ.info/',
+    'https://example.com/happ.agency/download',
+    'https://happ.agency.example.com/download',
+    'happ.agency.example.com',
+])
+def test_happ_lookalike_foreign_hosts_are_masked_not_rewritten(text):
+    assert sanitize_telegram_html(text) == '[ссылка удалена]'
 
 
 @pytest.mark.parametrize('url', ['javascript:alert(1)', 'https://user:password@example.com', 'file:///etc/passwd'])
@@ -208,14 +216,18 @@ def test_support_bot_links_include_start(text):
     'https://t.me/SligVPN_bot?start=ref_123',
     'https://t.me/SligVPN_bot?startapp=subscription',
     'https://t.me/SligVPN_bot/123',
-    'https://t.me/SligVPN_bot_other',
-    'https://t.me/SligVPN_bot.evil.example',
     'https://web.slig.app/subscriptions',
 ])
 def test_start_normalization_preserves_existing_deep_links_and_other_urls(url):
     expected = f'<a href="{url}">https://t.me/SligVPN_bot</a>' if '?start' in url else url
     assert sanitize_telegram_html(url) == expected
     assert sanitize_telegram_html(f'<a href="{url}">Бот</a>') == f'<a href="{url}">Бот</a>'
+
+
+@pytest.mark.parametrize('url', ['https://t.me/SligVPN_bot_other', 'https://t.me/SligVPN_bot.evil.example'])
+def test_lookalike_bot_links_are_not_clickable(url):
+    assert sanitize_telegram_html(url) == '[ссылка удалена]'
+    assert sanitize_telegram_html(f'<a href="{url}">Бот</a>') == 'Бот'
 
 
 @pytest.mark.parametrize('question', [
