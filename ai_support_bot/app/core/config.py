@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     MIN_SCORE: float = 0.35
     CHUNK_MAX_CHARS: int = 1200
     CONTEXT_MESSAGES: int = 8
-    HISTORY_LIMIT: int = 100
+    HISTORY_LIMIT: int = 100  # сколько последних сообщений хранить для каждого пользователя
+    STATE_TTL_HOURS: int = 24  # 0 = без срока; после такого перерыва новое сообщение начинает новый диалог
     DAILY_MESSAGE_LIMIT: int = 0  # 0 = без лимита; лимит сообщений пользователя в сутки
     THROTTLE_SECONDS: int = 4  # 0 = без задержки; минимальный интервал между запросами ИИ одного чата
     BUSINESS_REPLY_DELAY_SECONDS: int = 15  # время для вмешательства оператора перед обработкой обращения

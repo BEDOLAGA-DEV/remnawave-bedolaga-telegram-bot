@@ -80,7 +80,7 @@ async def read_account_support(telegram_id: int, kind: str, email: str | None = 
         ), {'uid': user['id']})).mappings().all()
         active_paid = [row for row in rows if row['status'] == 'active' and not row['is_trial']
                        and (end := _date(row['end_date'])) and end > datetime.now(UTC)]
-        return {'status': 'ok', 'active_paid_subscription': len(rows) == 1 and bool(active_paid),
+        return {'status': 'ok', 'active_paid_subscription': bool(active_paid),
                 'multiple_subscriptions': len(rows) > 1}
     except Exception as error:
         logger.warning('Personal support evidence unavailable', kind=kind, error=type(error).__name__)

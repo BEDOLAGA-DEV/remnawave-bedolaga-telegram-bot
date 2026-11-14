@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 _SERVICE_HOSTS = {'slig.app', 'web.slig.app', 'sligvpn.ru', 'connect.sligvpn.ru'}
 _SERVICE_BOTS = {'sligvpn_bot', 'sligapp'}
 _CLIENT_NAME = re.compile(r'^(?:happ|incy|v2raytun|v2rayng|v2rayn|shadowrocket|streisand|v2box)$', re.IGNORECASE)
+_PAYMENT_REPORT = re.compile(r'оплатил|заплатил|проплат|списал|чек|не зачис|не продл', re.IGNORECASE)
 
 
 def classify_service_source(name: str, url: str, location: str, owned_hosts=()) -> dict:
@@ -44,7 +45,8 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
 
 
 def official_service_reference(text: str) -> dict | None:
-    match = re.search(r'(?<![\w/])@(?:sligapp|sligvpn_bot)(?![\w])|https://t\.me/(?:sligapp|sligvpn_bot)(?![\w/])', text, re.IGNORECASE)
+    match = re.search(r'(?<![\w/])@(?:sligapp|sligvpn_bot)(?![\w])|https://t\.me/(?:sligapp|sligvpn_bot)(?![\w/])'
+                      r'|(?<![\w.@/])(?:https://)?(?:web\.)?slig\.app(?![\w.-])', text, re.IGNORECASE)
     if match:
         return classify_service_source('', match.group(), 'seller_chat')
     return None
@@ -52,12 +54,13 @@ def official_service_reference(text: str) -> dict | None:
 
 def tariff_question(question: str, history: list) -> bool:
     def pricing(text):
-        return bool(re.search(r'тариф|пакет|цен|стоим|руб|₽|\d+\s*р\b', text, re.IGNORECASE)
-                    and re.search(r'устройств|сколько|за одно|за вс[её]|за 5|что входит|включ|стоит|стоим|цен', text, re.IGNORECASE)
-                    and not re.search(r'оплатил|заплатил|проплат|списал|чек|не зачис|не продл', text, re.IGNORECASE))
+        return bool((re.search(r'сколько\s+(?:\w+\s+)?сто(?:ит|ят|ить)\b|поч[её]м\b', text, re.IGNORECASE)
+                     or (re.search(r'тариф|пакет|цен|стоим|руб|₽|\d+\s*р\b', text, re.IGNORECASE)
+                         and re.search(r'устройств|сколько|за одно|за вс[её]|за 5|что входит|включ|стоит|стоим|цен', text, re.IGNORECASE)))
+                    and not _PAYMENT_REPORT.search(text))
     if pricing(question):
         return True
-    if official_service_reference(question):
+    if official_service_reference(question) and not _PAYMENT_REPORT.search(question):
         return any(pricing(item.content or '') for item in history[-6:] if item.role == 'user')
     return False
 

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_support_bot.app.db.models import Conversation, KnowledgeChunk, KnowledgeSource, Message
@@ -91,6 +91,15 @@ async def get_or_create_conversation(db: AsyncSession, telegram_id: int) -> Conv
     if conversation:
         return conversation
     return await start_conversation(db, telegram_id)
+
+
+async def last_activity_at(db: AsyncSession, conversation_id: int) -> datetime | None:
+    last = await db.scalar(select(func.max(Message.created_at)).where(Message.conversation_id == conversation_id))
+    if last is None:
+        last = await db.scalar(select(Conversation.updated_at).where(Conversation.id == conversation_id))
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return last
 
 
 async def start_conversation(db: AsyncSession, telegram_id: int) -> Conversation:
@@ -217,15 +226,25 @@ async def save_summary(
     conversation.summary_updated_at = datetime.now(UTC)
 
 
-async def prune_messages(db: AsyncSession, keep_last: int) -> int:
+async def prune_messages(
+    db: AsyncSession, telegram_id: int, keep_last: int, escalated_conversation_id: int | None = None,
+) -> int:
+    """Keep the user's latest messages; today's ones feed the daily limit, escalated photos feed handoffs."""
     result = await db.execute(
-        select(Message.id).order_by(Message.created_at.desc(), Message.id.desc()).offset(keep_last)
+        select(Message.id)
+        .where(Message.telegram_id == telegram_id)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .offset(keep_last)
     )
     stale_ids = [row[0] for row in result.all()]
     if not stale_ids:
         return 0
-    await db.execute(delete(Message).where(Message.id.in_(stale_ids)))
-    return len(stale_ids)
+    day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    conditions = [Message.id.in_(stale_ids), Message.created_at < day_start]
+    if escalated_conversation_id is not None:
+        conditions.append(or_(Message.has_media.is_(False), Message.conversation_id != escalated_conversation_id))
+    deleted = await db.execute(delete(Message).where(*conditions))
+    return deleted.rowcount or 0
 
 
 async def mark_escalated(db: AsyncSession, conversation_id: int) -> None:
