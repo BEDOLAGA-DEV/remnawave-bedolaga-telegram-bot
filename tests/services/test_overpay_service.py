@@ -59,7 +59,7 @@ async def test_create_payment_uses_explicit_project_id(service: tuple[OverpaySer
     )
 
     assert result['resultUrl'] == 'https://pay.overpay.io/form'
-    assert fake.post_calls[0]['url'] == 'https://api-pay.overpay.io/orders/'
+    assert fake.post_calls[0]['url'] == 'https://api-pay.overpay.io/orders/preflight'
     assert fake.post_calls[0]['json']['projectId'] == 'sbp-terminal'
 
 

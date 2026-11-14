@@ -168,7 +168,7 @@ class OverpayService:
     ) -> dict[str, Any]:
         """
         Создает платеж через API Overpay.
-        POST {API_URL}/orders/
+        POST {API_URL}/orders/preflight
         """
         payload: dict[str, Any] = {
             'amount': amount,
@@ -195,7 +195,7 @@ class OverpayService:
         try:
             client = await self._get_client()
             response = await client.post(
-                f'{self.api_url}/orders/',
+                f'{self.api_url}/orders/preflight',  # POST /orders/ нет (http 404), смотреть issue #2915
                 json=payload,
                 headers={'Content-Type': 'application/json'},
             )
