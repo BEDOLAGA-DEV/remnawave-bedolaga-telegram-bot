@@ -82,6 +82,10 @@ class GraceRestoreOutcome(StrEnum):
     CONFLICT = 'conflict'
 
 
+class GraceSquadReplacementRequired(Exception):
+    """Operator must select an existing replacement for a deleted grace squad."""
+
+
 class GracePanelTransitionPending(Exception):
     """Signal that Remnawave is still deriving a server-owned panel status."""
 
@@ -486,6 +490,17 @@ class GraceAccessService:
                 await self._clear_error(session.subscription_id)
                 result = replace(result, unchanged=result.unchanged + 1)
                 continue
+            except GraceSquadReplacementRequired as error:
+                message = _error_text(error)
+                if session.last_error != message:
+                    logger.warning(
+                        'Grace squad needs operator configuration',
+                        reason=str(error),
+                        subscription_id=session.subscription_id,
+                    )
+                await self._remember_error(session.subscription_id, error)
+                result = replace(result, errors=result.errors + 1)
+                continue
             except Exception as error:
                 await self._remember_error(session.subscription_id, error)
                 logger.exception(
@@ -547,6 +562,17 @@ class GraceAccessService:
         # Remnawave releases, so these cannot rely on optional fields.
         return normalized_event in {'user.enabled', 'user.expired', 'user.limited'}
 
+    async def _repair_deleted_squad(self, session: GraceAccessSession) -> GraceAccessSession:
+        repair = getattr(self._panel, 'repair_deleted_squad', None)
+        if repair is None:
+            return session
+        overlay = await repair(session, self._policy.squad_for(session.reason))
+        if overlay == session.overlay:
+            return session
+        return await self._store.save(
+            replace(session, overlay=overlay, updated_at=_as_utc(self._clock()), last_error=None)
+        )
+
     async def _activate_pending(self, session: GraceAccessSession) -> GraceAccessSession:
         now = _as_utc(self._clock())
         latest_billing = await self._billing.get_subscription(session.subscription_id)
@@ -571,6 +597,9 @@ class GraceAccessService:
             action = await self._restore_and_complete(session, GraceCompletionReason.CONFLICT)
             return action[1]
 
+        session = await self._repair_deleted_squad(session)
+        if session.state is not GraceSessionState.PENDING:
+            return session
         current_panel = await self._panel.read_snapshot(session.remnawave_id)
         if current_panel is None:
             return await self._complete(
@@ -751,6 +780,10 @@ class GraceAccessService:
                 return GraceCompletionReason.CONFLICT.value
             if panel_matches_overlay(current_panel, session.overlay, now=now):
                 return 'unchanged'
+
+            repaired = await self._repair_deleted_squad(session)
+            if repaired.overlay != session.overlay:
+                return 'repaired'
 
             # Any unexpected panel difference can be an emergency/manual
             # revocation. Never blindly re-apply the overlay, including in

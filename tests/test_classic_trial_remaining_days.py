@@ -46,7 +46,12 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
 
     # This unit fixture has no bank agreement; live guards are covered on PostgreSQL.
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_live_payhot', AsyncMock(return_value=False))
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_conflicting_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        'app.services.cispay_recurrent_guard._has_conflicting_cispay_only', AsyncMock(return_value=False)
+    )
     monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', carry)
     monkeypatch.setattr(settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', reset)
     monkeypatch.setattr(grace_access_echo, 'undo_grace_overlay_echo', AsyncMock())
@@ -94,6 +99,7 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
         operation = m.MiniAppSubscriptionPurchaseService().submit_purchase(db, context, pricing)
     elif flow == 'telegram':
         m = telegram_purchase
+        db.execute.return_value = SimpleNamespace(scalar_one=lambda: subscription)
         from app.services.pricing_engine import PricingEngine, pricing_engine
 
         monkeypatch.setattr(m, 'datetime', FrozenDateTime)

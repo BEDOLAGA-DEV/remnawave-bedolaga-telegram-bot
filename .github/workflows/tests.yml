@@ -9,15 +9,23 @@ on:
 permissions:
   contents: read
 
+# A branch push and its PR share one test lane; newer work supersedes old work.
+# Include the source repository so identically named fork branches stay isolated.
+concurrency:
+  group: tests-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   pytest:
     name: pytest (PostgreSQL ${{ matrix.postgres }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     # Each shard gets its own PostgreSQL service: no shared test schemas.
     # Stable nodeid partitions preserve the complete suite on both versions.
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         postgres: ['18', '15']
         shard: [0, 1, 2, 3]
@@ -65,7 +73,7 @@ jobs:
       # это должно быть видно сразу, а не утонуть в общем прогоне.
       - name: Run PostgreSQL tests
         run: >-
-          uv run --frozen python -m pytest -p tests.pytest_pg_shard -m postgres -q
+          uv run --frozen python -m pytest -p tests.pytest_pg_shard -m postgres -vv -o faulthandler_timeout=120
           --pg-shard-index=${{ matrix.shard }} --pg-shard-count=4
 
       # PostgreSQL cases already ran above; the two marker partitions together

@@ -293,6 +293,26 @@ def _get_method_defaults(*, include_disabled_sub_options: bool = False) -> dict:
                 {'id': 'sbp', 'name': 'СБП'},
             ],
         },
+        'payhot': {
+            'default_display_name': settings.get_payhot_display_name(),
+            'is_configured': settings.is_payhot_enabled(),
+            'default_min': settings.PAYHOT_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.PAYHOT_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {
+                    'id': method,
+                    'name': {
+                        'sbp': 'СБП',
+                        'card': 'Карта',
+                        'sberpay': 'SberPay',
+                        'crypto': 'Криптовалюта',
+                        'applepay': 'Apple Pay',
+                        'googlepay': 'Google Pay',
+                    }[method],
+                }
+                for method in settings.get_payhot_methods()
+            ],
+        },
         'anore': {
             'default_display_name': settings.get_anore_display_name(),
             'is_configured': settings.is_anore_enabled(),
@@ -395,6 +415,7 @@ DEFAULT_METHOD_ORDER = [
     'donut',
     'lava',
     'cispay',
+    'payhot',
     'anore',
     'tabpay',
     'paritypay',
@@ -703,7 +724,7 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if method_id in {'antilopay', 'anore', 'cispay'} and available_sub_options:
+        if method_id in {'antilopay', 'anore', 'payhot', 'cispay'} and available_sub_options:
             # Preserve the distinction between default options and all disabled.
             # Cabinet checkout must never fall back to the provider's unrestricted form.
             configured_options = config.sub_options or {}
@@ -751,6 +772,32 @@ async def get_anore_checkout_policy(db: AsyncSession, user) -> dict | None:
     default = _get_method_defaults()['anore']
     return {
         'id': 'anore',
+        'name': default['default_display_name'],
+        'min_amount_kopeks': default['default_min'],
+        'max_amount_kopeks': default['default_max'],
+        'options': default['available_sub_options'],
+    }
+
+
+async def get_payhot_checkout_policy(db: AsyncSession, user) -> dict | None:
+    """Effective policy shared by checkout prompts and creation entry points."""
+    if not settings.is_payhot_enabled():
+        return None
+    config = await get_config_by_method_id(db, 'payhot')
+    if config is not None:
+        if user is None and (
+            config.user_type_filter != 'all'
+            or config.first_topup_filter != 'any'
+            or config.promo_group_filter_mode == 'selected'
+        ):
+            return None
+        methods = await get_enabled_methods_for_user(
+            db, user, is_first_topup=not getattr(user, 'has_made_first_topup', False) if user else None
+        )
+        return next((method for method in methods if method['id'] == 'payhot'), None)
+    default = _get_method_defaults()['payhot']
+    return {
+        'id': 'payhot',
         'name': default['default_display_name'],
         'min_amount_kopeks': default['default_min'],
         'max_amount_kopeks': default['default_max'],

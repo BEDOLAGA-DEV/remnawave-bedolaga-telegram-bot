@@ -306,7 +306,7 @@ async def show_blocked_users_menu(
     data = await state.get_data()
     scan_result = data.get('blocked_users_scan_result')
 
-    text = BlockedUsersText.MENU_TITLE.localized(texts) + BlockedUsersText.MENU_DESCRIPTION.localized(db_user.language)
+    text = BlockedUsersText.MENU_TITLE.localized(texts) + BlockedUsersText.MENU_DESCRIPTION.localized(texts)
 
     if scan_result:
         text += (

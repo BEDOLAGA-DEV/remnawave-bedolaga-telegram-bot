@@ -1512,106 +1512,6 @@ def get_broadcast_history_keyboard(page: int, total_pages: int, language: str = 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_sync_options_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_TO_PANEL', '⬆️ Синхронизация в панель'), callback_data='sync_to_panel'
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_ONLY_NEW', '🆕 Только новые'), callback_data='sync_new_users'
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_UPDATE', '📈 Обновить данные'), callback_data='sync_update_data'
-            )
-        ],
-        [
-            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='sync_validate'),
-            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_CLEANUP', '🧹 Очистка'), callback_data='sync_cleanup'),
-        ],
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_RECOMMENDATIONS', '💡 Рекомендации'), callback_data='sync_recommendations'
-            )
-        ],
-        [InlineKeyboardButton(text=texts.BACK, callback_data='admin_remnawave')],
-    ]
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_sync_confirmation_keyboard(sync_type: str, language: str = 'ru') -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_CONFIRM', '✅ Подтвердить'), callback_data=f'confirm_{sync_type}'
-            )
-        ],
-        [InlineKeyboardButton(text=_t(texts, 'ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_rw_sync')],
-    ]
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_sync_result_keyboard(sync_type: str, has_errors: bool = False, language: str = 'ru') -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    keyboard = []
-
-    if has_errors:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_RETRY', '🔄 Повторить'), callback_data=f'sync_{sync_type}'
-                )
-            ]
-        )
-
-    if sync_type != 'all_users':
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
-                )
-            ]
-        )
-
-    keyboard.extend(
-        [
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_STATS_BUTTON', '📊 Статистика'), callback_data='admin_rw_system'
-                ),
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='sync_validate'
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_BACK', '⬅️ К синхронизации'), callback_data='admin_rw_sync'
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BACK_TO_MAIN', '🏠 В главное меню'), callback_data='admin_remnawave'
-                )
-            ],
-        ]
-    )
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
 def get_period_selection_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -2182,20 +2082,6 @@ def get_maintenance_keyboard(
             InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_settings'),
         ]
     )
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_sync_simplified_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
-            )
-        ],
-        [InlineKeyboardButton(text=texts.BACK, callback_data='admin_remnawave')],
-    ]
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

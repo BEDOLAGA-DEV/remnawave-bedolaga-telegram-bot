@@ -121,6 +121,9 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
         from .cispay_recurrent import cispay_menu_rows
 
         daily_keyboard_rows.extend(await cispay_menu_rows(db, db_user, subscription, texts))
+        from .payhot_recurrent import payhot_menu_rows
+
+        daily_keyboard_rows.extend(await payhot_menu_rows(db, db_user, subscription, texts))
         daily_keyboard_rows.extend(await _cashera_recurring_rows(db, subscription, texts))
         back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
         daily_keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
@@ -174,7 +177,10 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
         )
 
     from .cispay_recurrent import cispay_menu_rows
+    from .payhot_recurrent import payhot_menu_rows
 
+    for row in await payhot_menu_rows(db, db_user, subscription, texts):
+        keyboard.inline_keyboard.insert(-1, row)
     for row in await cispay_menu_rows(db, db_user, subscription, texts):
         keyboard.inline_keyboard.insert(-1, row)
     for row in await _cashera_recurring_rows(db, subscription, texts):

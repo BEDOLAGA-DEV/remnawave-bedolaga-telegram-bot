@@ -172,6 +172,14 @@ def _extract_campaign_slug(body_slug: str | None, request: Request) -> str | Non
 
 
 class PurchaseRequest(BaseModel):
+    @model_validator(mode='after')
+    def require_payhot_phone(self):
+        if (self.payment_method == 'payhot_sberpay') and not self.payment_phone:
+            raise ValueError('SberPay requires your bank-linked phone in +7XXXXXXXXXX format')
+        return self
+
+    payment_phone: str | None = Field(default=None, pattern=r'^\+7[0-9]{10}$', max_length=12)
+
     tariff_id: int
     period_days: int
     contact_type: str = Field(pattern=r'^(email|telegram)$')
@@ -950,6 +958,7 @@ async def create_landing_purchase(
 
     payment_service = PaymentService()
     payment_result = await payment_service.create_guest_payment(
+        payment_phone=body.payment_phone,
         db=db,
         amount_kopeks=amount_kopeks,
         payment_method=body.payment_method,

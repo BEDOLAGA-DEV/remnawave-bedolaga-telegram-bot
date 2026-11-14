@@ -30,9 +30,14 @@ class PanelBoundary(BaseException):
         ('direct', True, True),
     ],
 )
+@pytest.mark.parametrize('failure', [False, True])
 @pytest.mark.parametrize('reset', [False, True])
-async def test_simple_payment_resets_db_and_panel_together(postgres_database, monkeypatch, flow, trial, expired, reset):
+async def test_simple_payment_resets_db_and_panel_together(
+    postgres_database, monkeypatch, flow, trial, expired, reset, failure
+):
     monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
+    monkeypatch.setattr(settings, 'DEFAULT_AUTOPAY_ENABLED', True)
+    monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', False)
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
     monkeypatch.setattr(settings, 'SIMPLE_SUBSCRIPTION_ENABLED', True)
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset)
@@ -57,6 +62,7 @@ async def test_simple_payment_resets_db_and_panel_together(postgres_database, mo
             id=7,
             user_id=42,
             is_trial=trial,
+            autopay_enabled=False,
             status='expired' if expired else 'active',
             start_date=now - timedelta(days=25),
             end_date=now + timedelta(days=-1 if expired else 5),
@@ -89,6 +95,20 @@ async def test_simple_payment_resets_db_and_panel_together(postgres_database, mo
             if flow == 'confirm'
             else simple.handle_simple_subscription_pay_with_balance
         )
+        if failure:
+            monkeypatch.setattr(
+                'app.database.crud.subscription.extend_subscription',
+                AsyncMock(side_effect=RuntimeError('grant failed')),
+            )
+            await handler(callback, user, state, db)
+            await db.rollback()
+            await db.refresh(user)
+            await db.refresh(sub)
+            if trial:
+                assert user.balance_kopeks == 10000
+                assert sub.is_trial is True
+            panel_call.assert_not_awaited()
+            return
         with pytest.raises(PanelBoundary):
             await handler(callback, user, state, db)
         await db.refresh(sub)
@@ -98,5 +118,8 @@ async def test_simple_payment_resets_db_and_panel_together(postgres_database, mo
         assert user.balance_kopeks == 9700
         assert sub.pending_panel_expire_at == sub.end_date
         assert sub.is_trial is False
+        if trial:
+            assert sub.autopay_enabled is True
+            assert abs((sub.end_date - (now + timedelta(days=30))).total_seconds()) < 10
         assert sub.traffic_limit_gb == 120
         assert await db.get(TrafficPurchase, 9) is not None

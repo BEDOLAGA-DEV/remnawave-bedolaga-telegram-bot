@@ -220,7 +220,9 @@ async def test_legacy_source_with_package_migrates_before_switch_charge(monkeypa
         invoke.panel.traffic_limit_bytes = 12 * 1024**3
         invoke.panel.user_traffic.used_traffic_bytes = 5 * 1024**3
         invoke.panel.user_traffic.lifetime_used_traffic_bytes = 5 * 1024**3
-        await invoke()
+        import asyncio
+
+        await asyncio.wait_for(invoke(), timeout=15)
         await db.refresh(sub)
         assert sub.traffic_accounting_mode == 'managed'
         account, state = await load_account(db, 1)

@@ -478,6 +478,14 @@ class MiniAppPaymentMethodsResponse(BaseModel):
 
 
 class MiniAppPaymentCreateRequest(BaseModel):
+    @model_validator(mode='after')
+    def require_payhot_phone(self):
+        if (self.method == 'payhot' and self.payment_option == 'sberpay') and not self.payment_phone:
+            raise ValueError('SberPay requires your bank-linked phone in +7XXXXXXXXXX format')
+        return self
+
+    payment_phone: str | None = Field(default=None, pattern=r'^\+7[0-9]{10}$', max_length=12)
+
     init_data: str = Field(..., alias='initData')
     method: str
     amount_rubles: float | None = Field(default=None, alias='amountRubles')

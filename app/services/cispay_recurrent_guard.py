@@ -3,7 +3,7 @@
 from sqlalchemy import select, update
 
 from app.database.crud.cispay_subscriptions import LIVE_STATUSES
-from app.database.models import CisPaySubscription, User
+from app.database.models import CisPaySubscription
 
 
 async def has_live_cispay(db, subscription_id: int) -> bool:
@@ -20,7 +20,7 @@ async def has_live_cispay(db, subscription_id: int) -> bool:
     )
 
 
-async def has_conflicting_cispay(db, *, user_id: int, subscription_id: int) -> bool:
+async def _has_conflicting_cispay_only(db, *, user_id: int, subscription_id: int) -> bool:
     from app.config import settings
 
     if settings.is_multi_tariff_enabled():
@@ -40,20 +40,29 @@ async def has_conflicting_cispay(db, *, user_id: int, subscription_id: int) -> b
     )
 
 
-async def require_no_cispay(db, *, user_id: int, subscription_id: int):
-    from app.config import settings
+async def has_conflicting_cispay(db, *, user_id: int, subscription_id: int) -> bool:
+    """Compatibility guard for competing automatic billing, including HOT Pay."""
+    from app.services.payhot_recurrent_guard import has_conflicting_payhot
 
-    if not settings.CISPAY_RECURRENT_ENABLED and not await has_conflicting_cispay(
+    return await _has_conflicting_cispay_only(
         db, user_id=user_id, subscription_id=subscription_id
-    ):
-        return
-    # Keep this lock until the competing provider reservation / balance setting commits.
-    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
-    if await has_conflicting_cispay(db, user_id=user_id, subscription_id=subscription_id):
+    ) or await has_conflicting_payhot(db, user_id=user_id, subscription_id=subscription_id)
+
+
+async def require_no_cispay(db, *, user_id: int, subscription_id: int, lock_user: bool = True):
+    """Reject live billing; unlocked preflight must be rechecked before mutation."""
+    from app.services.payhot_recurrent_guard import require_no_payhot
+
+    # Both providers reserve under the account lock, even when enrollment is disabled.
+    await require_no_payhot(db, user_id=user_id, subscription_id=subscription_id, lock_user=lock_user)
+    if await _has_conflicting_cispay_only(db, user_id=user_id, subscription_id=subscription_id):
         raise ValueError('Сначала отключите автоплатёж CisPay и дождитесь подтверждения отключения.')
 
 
 async def stage_cispay_cancellation(db, subscription_id: int, *, reason: str):
+    from app.services.payhot_recurrent_guard import stage_payhot_cancellation
+
+    await stage_payhot_cancellation(db, subscription_id, reason=reason)
     # No commit or network: never commit an unfinished purchase/admin mutation here.
     await db.execute(
         update(CisPaySubscription)
@@ -66,6 +75,9 @@ async def stage_cispay_cancellation(db, subscription_id: int, *, reason: str):
 
 
 async def guard_cispay_credentials(db, key: str, value):
+    from app.services.payhot_recurrent_guard import guard_payhot_credentials
+
+    await guard_payhot_credentials(db, key, value)
     if key not in ('CISPAY_SHOP_ID', 'CISPAY_API_KEY'):
         return
     rows = list(

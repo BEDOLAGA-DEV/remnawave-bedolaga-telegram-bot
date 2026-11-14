@@ -17,6 +17,7 @@ from app.utils.pricing_utils import (
     apply_percentage_discount,
     format_period_description,
 )
+from app.utils.subscription_mirrors import get_subscription_mirrors
 from app.utils.subscription_utils import (
     get_display_subscription_link,
     get_happ_cryptolink_redirect_link,
@@ -24,6 +25,58 @@ from app.utils.subscription_utils import (
 
 
 logger = structlog.get_logger(__name__)
+
+
+def add_subscription_mirror_selector(
+    markup: InlineKeyboardMarkup, subscription, language: str = DEFAULT_LANGUAGE
+) -> InlineKeyboardMarkup:
+    """Add a context-bound selector; never expose mirrors in hidden/crypto modes."""
+    sub_id = getattr(subscription, 'id', None)
+    if not sub_id or not get_subscription_mirrors(getattr(subscription, 'subscription_url', None)):
+        return markup
+    if any((button.callback_data or '').startswith('sub_mirrors:') for row in markup.inline_keyboard for button in row):
+        return markup
+    # Post-purchase and promo keyboards can contain legacy unscoped callbacks.
+    # Bind those to the same subscription as the selector without mutating callers.
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                button.model_copy(update={'callback_data': f'{button.callback_data}:{sub_id}'})
+                if button.callback_data in {'subscription_connect', 'open_subscription_link'}
+                else button
+                for button in buttons
+            ]
+            for buttons in markup.inline_keyboard
+        ]
+    )
+    texts = get_texts(language)
+    row = [
+        InlineKeyboardButton(
+            text=texts.t('SUBSCRIPTION_MIRROR_SELECTOR', 'Ссылка: {label} ▾').format(
+                label=texts.t('SUBSCRIPTION_MIRROR_MAIN', 'Основная')
+            ),
+            callback_data=f'sub_mirrors:{sub_id}:0:main',
+        )
+    ]
+    position = len(markup.inline_keyboard)
+    canonical = getattr(subscription, 'subscription_url', None)
+    for index, buttons in enumerate(markup.inline_keyboard):
+        if any(
+            button.url == canonical
+            or (button.web_app and button.web_app.url == canonical)
+            or (button.callback_data or '').split(':')[0] in {'subscription_connect', 'open_subscription_link', 'sl'}
+            for button in buttons
+        ):
+            position = index + 1
+            break
+        if any(
+            (button.callback_data or '').split(':')[0] in {'back_to_menu', 'menu_subscription', 'sm'}
+            for button in buttons
+        ):
+            position = min(position, index)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[*markup.inline_keyboard[:position], row, *markup.inline_keyboard[position:]]
+    )
 
 
 async def get_main_menu_keyboard_async(
@@ -138,7 +191,9 @@ async def get_main_menu_keyboard_async(
             has_autopay=has_autopay,
         )
 
-        return await MenuLayoutService.build_keyboard(db, context)
+        return add_subscription_mirror_selector(
+            await MenuLayoutService.build_keyboard(db, context), subscription, language
+        )
 
     # Fallback на синхронную версию
     return get_main_menu_keyboard(
@@ -813,7 +868,7 @@ def get_main_menu_keyboard(
             [InlineKeyboardButton(text=get_texts(language).t('MODERATION_BUTTON'), callback_data='moderator_panel')]
         )
 
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return add_subscription_mirror_selector(InlineKeyboardMarkup(inline_keyboard=keyboard), subscription, language)
 
 
 def get_info_menu_keyboard(
@@ -1340,7 +1395,7 @@ def get_subscription_keyboard(
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return add_subscription_mirror_selector(InlineKeyboardMarkup(inline_keyboard=keyboard), subscription, language)
 
 
 def get_payment_methods_keyboard_with_cart(
@@ -2331,6 +2386,26 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                     InlineKeyboardButton(
                         text=f'💳 {settings.get_anore_display_name()} — {label}',
                         callback_data=_build_callback(f'anore_{method}'),
+                    )
+                ]
+            )
+        has_direct_payment_methods = True
+
+    if settings.is_payhot_enabled():
+        for method in settings.get_payhot_methods():
+            label = {
+                'sbp': 'СБП',
+                'card': 'Карта',
+                'sberpay': 'SberPay',
+                'applepay': 'Apple Pay',
+                'googlepay': 'Google Pay',
+                'crypto': 'Криптовалюта',
+            }[method]
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f'💳 {settings.get_payhot_display_name()} — {label}',
+                        callback_data=_build_callback(f'payhot_{method}'),
                     )
                 ]
             )

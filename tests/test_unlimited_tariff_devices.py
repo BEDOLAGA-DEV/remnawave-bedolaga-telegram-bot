@@ -48,7 +48,12 @@ async def test_unlimited_tariff_does_not_charge_device_addons(current, days, dai
 @pytest.mark.parametrize(('new_base', 'cap', 'expected'), [(0, 2, 0), (2, 5, 5)])
 async def test_admin_tariff_change_preserves_unlimited(monkeypatch, new_base, cap, expected):
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_live_payhot', AsyncMock(return_value=False))
     monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.payhot_recurrent_guard.has_conflicting_payhot', AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        'app.services.cispay_recurrent_guard._has_conflicting_cispay_only', AsyncMock(return_value=False)
+    )
     from app.database.crud import transaction
     from app.handlers.admin import users as m
 

@@ -216,6 +216,20 @@ async def route_payment_by_method(
             await process_paritypay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method in (
+        'payhot',
+        'payhot_sbp',
+        'payhot_card',
+        'payhot_sberpay',
+        'payhot_applepay',
+        'payhot_googlepay',
+        'payhot_crypto',
+    ):
+        from .payhot import process_payhot_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_payhot_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
     if payment_method in ('anore', 'anore_sbp', 'anore_card', 'anore_yoomoney', 'anore_crypto'):
         from .anore import process_anore_payment_amount
 
@@ -974,6 +988,13 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
     dp.callback_query.register(start_cispay_card_topup, F.data == 'topup_cispay_card')
     dp.callback_query.register(start_cispay_sbp_topup, F.data == 'topup_cispay_sbp')
+
+    from .payhot import PAYHOT_PAYMENT_METHODS, process_payhot_phone, start_payhot_selected_topup
+
+    dp.callback_query.register(
+        start_payhot_selected_topup, F.data.in_({f'topup_{method}' for method in PAYHOT_PAYMENT_METHODS})
+    )
+    dp.message.register(process_payhot_phone, BalanceStates.waiting_for_payhot_phone)
 
     from .anore import start_anore_selected_topup
 

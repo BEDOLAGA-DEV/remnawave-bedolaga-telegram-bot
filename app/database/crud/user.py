@@ -526,6 +526,11 @@ async def create_user(
 async def update_user(db: AsyncSession, user: User, **kwargs) -> User:
     from app.utils.validators import sanitize_telegram_name
 
+    if kwargs.get('status') in (UserStatus.BLOCKED.value, UserStatus.DELETED.value):
+        from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+        await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+        await stage_payhot_owner_cancellation(db, user.id, reason='account_unavailable')
     for field, value in kwargs.items():
         if field in ('first_name', 'last_name'):
             value = sanitize_telegram_name(value)
@@ -1562,6 +1567,10 @@ async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
 
 
 async def delete_user(db: AsyncSession, user: User) -> bool:
+    from app.services.payhot_recurrent_guard import stage_payhot_owner_cancellation
+
+    await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+    await stage_payhot_owner_cancellation(db, user.id, reason='account_deleted')
     user.status = UserStatus.DELETED.value
     user.updated_at = datetime.now(UTC)
 

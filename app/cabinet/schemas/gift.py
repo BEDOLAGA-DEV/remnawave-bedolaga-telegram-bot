@@ -56,6 +56,14 @@ class GiftConfigResponse(BaseModel):
 
 
 class GiftPurchaseRequest(BaseModel):
+    @model_validator(mode='after')
+    def require_payhot_phone(self):
+        if (self.payment_method == 'payhot_sberpay') and not self.payment_phone:
+            raise ValueError('SberPay requires your bank-linked phone in +7XXXXXXXXXX format')
+        return self
+
+    payment_phone: str | None = Field(default=None, pattern=r'^\+7[0-9]{10}$', max_length=12)
+
     tariff_id: int = Field(gt=0)
     period_days: int = Field(gt=0, le=3650)
     recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')

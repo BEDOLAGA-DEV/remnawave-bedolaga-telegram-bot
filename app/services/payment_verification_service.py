@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -35,6 +35,7 @@ from app.database.models import (
     MulenPayPayment,
     Pal24Payment,
     ParityPayPayment,
+    PayHotPayment,
     PaymentMethod,
     PlategaPayment,
     RioPayPayment,
@@ -93,6 +94,7 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.ROLLYPAY,
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
+        PaymentMethod.PAYHOT,
         PaymentMethod.ANORE,
         PaymentMethod.ANTILOPAY,
         PaymentMethod.TABPAY,
@@ -124,6 +126,7 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.ROLLYPAY,
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
+        PaymentMethod.PAYHOT,
         PaymentMethod.ANORE,
         PaymentMethod.ANTILOPAY,
         PaymentMethod.TABPAY,
@@ -180,6 +183,9 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_cispay_display_name()
     if method == PaymentMethod.CASHERA:
         return settings.get_cashera_display_name()
+    if method == PaymentMethod.PAYHOT:
+        return settings.get_payhot_display_name()
+
     if method == PaymentMethod.ANORE:
         return settings.get_anore_display_name()
     if method == PaymentMethod.TABPAY:
@@ -236,6 +242,9 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_cispay_configured()
     if method == PaymentMethod.CASHERA:
         return settings.is_cashera_enabled()
+    if method == PaymentMethod.PAYHOT:
+        return settings.is_payhot_configured()
+
     if method == PaymentMethod.ANORE:
         return settings.is_anore_configured()
     if method == PaymentMethod.TABPAY:
@@ -328,6 +337,8 @@ class AutoPaymentVerificationService:
             try:
                 pending = await list_recent_pending_payments(session)
                 candidates = [record for record in pending if record.method in methods and not record.is_paid]
+                if PaymentMethod.PAYHOT in methods:
+                    candidates.extend(await _fetch_payhot_fulfillment_recovery(session))
 
                 if not candidates:
                     logger.debug('Автопроверка пополнений: подходящих ожидающих платежей нет')
@@ -563,6 +574,12 @@ def _is_paritypay_pending(payment: ParityPayPayment) -> bool:
 
 def _is_anore_pending(payment: AnorePayment) -> bool:
     return not payment.is_paid and not payment.is_test and (payment.status or '').lower() == 'new'
+
+
+def _is_payhot_pending(payment: PayHotPayment) -> bool:
+    from app.services.payhot_service import CHECKABLE_STATUSES
+
+    return not payment.is_paid and (payment.status or '').lower() in CHECKABLE_STATUSES
 
 
 def _is_tabpay_pending(payment: TabPayPayment) -> bool:
@@ -1209,6 +1226,63 @@ async def _fetch_anore_payments(db: AsyncSession, cutoff: datetime) -> list[Pend
     return records
 
 
+async def _fetch_payhot_fulfillment_recovery(db: AsyncSession) -> list[PendingPayment]:
+    """Background-only durable fulfillment; includes old invoices and unauthenticated guests."""
+    state = PayHotPayment.fulfillment_state['state'].as_string()
+    result = await db.execute(
+        select(PayHotPayment)
+        .options(selectinload(PayHotPayment.user))
+        .where(
+            PayHotPayment.is_paid.is_(True),
+            # Ordinary fulfillment uses done/attention; recurring uses
+            # completed/review. Neither terminal vocabulary belongs in retries.
+            or_(state.is_(None), state.not_in(('done', 'attention', 'completed', 'review'))),
+        )
+        .order_by(PayHotPayment.created_at)
+    )
+    return [
+        PendingPayment(
+            local_id=payment.id,
+            method=PaymentMethod.PAYHOT,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status,
+            is_paid=True,
+            created_at=payment.created_at,
+            expires_at=payment.expires_at,
+            user=payment.user,
+            payment=payment,
+        )
+        for payment in result.scalars().all()
+    ]
+
+
+async def _fetch_payhot_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(PayHotPayment)
+        .options(selectinload(PayHotPayment.user))
+        .where(PayHotPayment.created_at >= cutoff)
+        .order_by(desc(PayHotPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_payhot_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.PAYHOT,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_cashera_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(CasheraPayment)
@@ -1359,6 +1433,7 @@ async def list_recent_pending_payments(
         await _fetch_cispay_payments(db, cutoff),
         await _fetch_cashera_payments(db, cutoff),
         await _fetch_tabpay_payments(db, cutoff),
+        await _fetch_payhot_payments(db, cutoff),
         await _fetch_anore_payments(db, cutoff),
         await _fetch_paritypay_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
@@ -1708,6 +1783,21 @@ async def get_payment_record(
             expires_at=getattr(payment, 'expires_at', None),
         )
 
+    if method == PaymentMethod.PAYHOT:
+        payment = await db.get(PayHotPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.ANORE:
         payment = await db.get(AnorePayment, local_payment_id)
         if not payment:
@@ -1893,6 +1983,14 @@ async def run_manual_check(
             anore_payment = await db.get(AnorePayment, local_payment_id)
             if anore_payment:
                 result = await payment_service.check_anore_payment_status(db, anore_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+
+        elif method == PaymentMethod.PAYHOT:
+            payhot_payment = await db.get(PayHotPayment, local_payment_id)
+            if payhot_payment:
+                result = await payment_service.check_payhot_payment_status(db, payhot_payment.id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

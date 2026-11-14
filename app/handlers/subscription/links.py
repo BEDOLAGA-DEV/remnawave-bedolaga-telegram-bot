@@ -1,3 +1,6 @@
+import html
+import re
+
 from aiogram import types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup
@@ -6,11 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import (
+    add_subscription_mirror_selector,
     get_device_selection_keyboard,
     get_happ_cryptolink_keyboard,
     get_happ_download_button_row,
 )
 from app.localization.texts import get_texts
+from app.utils.subscription_mirrors import get_subscription_mirrors
 from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import (
     convert_subscription_link_to_happ_scheme,
@@ -119,7 +124,7 @@ async def handle_connect_subscription(
 
 🚀 Нажмите кнопку ниже, чтобы открыть подписку в мини-приложении Telegram:""",
             ),
-            reply_markup=keyboard,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
             parse_mode='HTML',
         )
 
@@ -153,7 +158,7 @@ async def handle_connect_subscription(
 
 📱 Нажмите кнопку ниже, чтобы открыть приложение:""",
             ),
-            reply_markup=keyboard,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
             parse_mode='HTML',
         )
 
@@ -173,7 +178,7 @@ async def handle_connect_subscription(
 
 🔗 Нажмите кнопку ниже, чтобы открыть ссылку подписки:""",
             ),
-            reply_markup=keyboard,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
             parse_mode='HTML',
         )
     elif connect_mode == 'happ_cryptolink':
@@ -201,7 +206,7 @@ async def handle_connect_subscription(
 
 🔗 Нажмите кнопку ниже, чтобы открыть ссылку подписки:""",
             ),
-            reply_markup=keyboard,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
             parse_mode='HTML',
         )
     else:
@@ -254,7 +259,11 @@ async def handle_connect_subscription(
 
         await callback.message.edit_text(
             device_text,
-            reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms, sub_id=sub_id),
+            reply_markup=add_subscription_mirror_selector(
+                get_device_selection_keyboard(db_user.language, platforms=platforms, sub_id=sub_id),
+                subscription,
+                db_user.language,
+            ),
             parse_mode='HTML',
         )
 
@@ -319,7 +328,7 @@ async def handle_open_subscription_link(
             happ_message,
             parse_mode='HTML',
             disable_web_page_preview=True,
-            reply_markup=keyboard,
+            reply_markup=add_subscription_mirror_selector(keyboard, subscription, db_user.language),
         )
         await callback.answer()
         return
@@ -359,19 +368,111 @@ async def handle_open_subscription_link(
 
     await callback.message.edit_text(
         link_text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                        callback_data=f'subscription_connect:{sub_id}'
-                        if settings.is_multi_tariff_enabled()
-                        else 'subscription_connect',
-                    )
-                ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
-            ]
+        reply_markup=add_subscription_mirror_selector(
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            callback_data=f'subscription_connect:{sub_id}'
+                            if settings.is_multi_tariff_enabled()
+                            else 'subscription_connect',
+                        )
+                    ],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                ]
+            ),
+            subscription,
+            db_user.language,
         ),
         parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_subscription_mirrors(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Resolve each choice against the current owned subscription and current config."""
+    from app.database.crud.subscription import get_subscription_by_id_for_user
+
+    texts = get_texts(db_user.language)
+    match = re.fullmatch(r'sub_mirrors:([1-9][0-9]{0,18}):([0-9]{1,6}):(main|[a-f0-9]{16})', callback.data or '')
+    pick = re.fullmatch(r'sub_mirror_pick:([1-9][0-9]{0,18}):(main|[a-f0-9]{16})', callback.data or '')
+    if not match and not pick:
+        await callback.answer(texts.t('SUBSCRIPTION_UI_INVALID_FORMAT', 'Неверный формат'), show_alert=True)
+        return
+    if callback.message is None or isinstance(callback.message, InaccessibleMessage):
+        await callback.answer()
+        return
+    sub_id = int((match or pick).group(1))
+    if sub_id > 2**31 - 1:
+        await callback.answer(texts.t('SUBSCRIPTION_UI_INVALID_FORMAT', 'Неверный формат'), show_alert=True)
+        return
+    subscription = await get_subscription_by_id_for_user(db, sub_id, db_user.id)
+    url = getattr(subscription, 'subscription_url', None)
+    mirrors = get_subscription_mirrors(url) if subscription else []
+    if not url or not mirrors:
+        await callback.answer(
+            texts.t('SUBSCRIPTION_LINK_UNAVAILABLE', '❌ Ссылка подписки недоступна'), show_alert=True
+        )
+        return
+    choices = [{'id': 'main', 'label': texts.t('SUBSCRIPTION_MIRROR_MAIN', 'Основная'), 'url': url}, *mirrors]
+    selected_id = match.group(3) if match else pick.group(2)
+    selected = next((choice for choice in choices if choice['id'] == selected_id), None)
+    if selected is None:
+        await callback.answer(
+            texts.t('SUBSCRIPTION_LINK_UNAVAILABLE', '❌ Ссылка подписки недоступна'), show_alert=True
+        )
+        return
+    back_cb = f'sm:{sub_id}' if settings.is_multi_tariff_enabled() else 'menu_subscription'
+    rows = []
+    if match:
+        page = int(match.group(2))
+        pages = (len(choices) + 5) // 6
+        if page >= pages:
+            await callback.answer(texts.t('SUBSCRIPTION_UI_INVALID_FORMAT', 'Неверный формат'), show_alert=True)
+            return
+        for choice in choices[page * 6 : (page + 1) * 6]:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=('✓ ' if choice['id'] == selected_id else '') + choice['label'],
+                        callback_data=f'sub_mirror_pick:{sub_id}:{choice["id"]}',
+                    )
+                ]
+            )
+        navigation = []
+        for target, label in ((page - 1, '‹'), (page + 1, '›')):
+            if 0 <= target < pages:
+                navigation.append(
+                    InlineKeyboardButton(text=label, callback_data=f'sub_mirrors:{sub_id}:{target}:{selected_id}')
+                )
+        if navigation:
+            rows.append(navigation)
+        message = texts.t('SUBSCRIPTION_MIRROR_CHOOSE', 'Выберите ссылку для подключения:') + f' ({page + 1}/{pages})'
+    else:
+        button_args = (
+            {'web_app': types.WebAppInfo(url=selected['url'])}
+            if settings.CONNECT_BUTTON_MODE == 'miniapp_subscription'
+            else {'url': selected['url']}
+        )
+        rows.append([InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), **button_args)])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_MIRROR_SELECTOR', 'Ссылка: {label} ▾').format(label=selected['label']),
+                    callback_data=f'sub_mirrors:{sub_id}:0:{selected_id}',
+                )
+            ]
+        )
+        message = texts.t('SUBSCRIPTION_MIRROR_SELECTED', 'Ссылка для этого подключения: {label}').format(
+            label=html.escape(selected['label'])
+        )
+        message += f'\n\n<code>{html.escape(selected["url"])}</code>'
+    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    await callback.message.edit_text(
+        message,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode='HTML',
+        disable_web_page_preview=True,
     )
     await callback.answer()

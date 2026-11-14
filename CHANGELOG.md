@@ -1,5 +1,56 @@
 # Changelog
 
+## [5.3.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.1...v5.3.0) (2026-11-14)
+
+### New Features
+
+* add HOT Pay RUB checkout and recurring billing ([4eefbe4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4eefbe40a3e7598c5775b47bb7341ac2aff33eae))
+* add subscription mirror selection across bot and cabinet ([de54d9a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de54d9aa7914a7c5ff1d3712ea6413e83f1e601c)), based on [PR #3369](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/pull/3369) by [foorsee](https://github.com/foorsee).
+
+### Bug Fixes
+
+* validate Anore principal amounts with payer fees and forward payer email ([a922bb4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a922bb42db76c159fb4897ecc73874a0dcde5440))
+* include HOT Pay in payment health statistics without unsupported fields ([9b6efdc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b6efdc35b3b2dbb5130336e92f1006b6380e09c))
+* avoid recurring guard deadlock during traffic migration, preserving the locked check before charging ([c67f218](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c67f218e))
+
+### Maintenance
+
+* isolate shared HOT Pay payment validation ([1303155](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13031558ec7df504449dd0e0ac0211f83c783a9a))
+* supersede obsolete test runs and bound parallel jobs without removing PostgreSQL coverage ([9f262fd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9f262fda4e95dd60948d60015ea5afccaeb8a956))
+
+## [5.2.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.0...v5.2.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* align Google OAuth token exchange with documented form encoding ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* allow paid traffic top-ups during limited grace ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* configure CisPay recurring periods on existing subscriptions ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* convert trials with paid limits and atomic balance charges ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* correct YooKassa payment parsing and trial warning configuration ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* **oauth:** encode Google token request as form data ([d993e79](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d993e79d6f60a9ccfb0561908c0c81c2ee0ea55e))
+* **polling:** сетевой сбой Telegram на старте не завершает процесс ([0003dc9](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0003dc90096a54cad874e3baec5a39c42a2294e7))
+* prevent duplicate renewals across retries and concurrent requests ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* recover grace access after internal squad replacement ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* release promo assignment locks and handle non-text broadcast input ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* restore access after switching traffic-limited tariffs ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* retry Telegram startup after network failures ([525d183](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/525d18345db1e398996c4df4c70cdc5052b5a1d0))
+* **startup:** сбой сети до polling не роняет бота, SIGTERM доходит до main ([33676b1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/33676b195633e7f9c2327f2bbfd565d0caeee7d5))
+* **tariff-switch:** мгновенная смена тарифа снимает статус limited ([d3b17c0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d3b17c0abde87aa27244b90601b1286548a4c691))
+
+
+### Refactoring
+
+* **remnawave:** удалить мёртвое старое меню синхронизации в админке бота ([b5255ff](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b5255ffb32422d927cb942ac21c232f42d04064f))
+
+
+### Documentation
+
+* place Google OAuth test in generated lexical order ([b57150f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b57150fa828c2b1999ba1fe3fb019eb1129ffcad))
+* regenerate project structure after OAuth test ([eeb8717](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/eeb8717462cdcd892178dca03222b255e50d9bda))
+* sort generated Google OAuth test entry ([18d1db1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/18d1db1c86619f4031cc39f8d745fc6fb595be79))
+* обновить project_structure_reference ([b85194f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b85194f192989d90abf982a96150b7bba37f092b))
+
 ## [5.2.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.1.1...v5.2.0) (2026-11-03)
 
 

@@ -357,7 +357,6 @@ class Settings(BaseSettings):
 
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
-    NOTIFICATION_RETRY_ATTEMPTS: int = 3
     # Уведомления истёкшим и отписавшимся от канала — переключатели меню «Уведомления пользователям»
     # в админке бота и раздела настроек кабинета. Хранятся в базе (system_settings), а не в файле.
     NOTIFICATION_TRIAL_CHANNEL_UNSUBSCRIBED_ENABLED: bool = True
@@ -369,9 +368,6 @@ class Settings(BaseSettings):
     NOTIFICATION_EXPIRED_WAVE3_DISCOUNT_PERCENT: int = 20
     NOTIFICATION_EXPIRED_WAVE3_VALID_HOURS: int = 24
     NOTIFICATION_EXPIRED_WAVE3_TRIGGER_DAYS: int = 5
-
-    MONITORING_LOGS_RETENTION_DAYS: int = 30
-    NOTIFICATION_CACHE_HOURS: int = 24
 
     SERVER_STATUS_MODE: str = 'disabled'
     SERVER_STATUS_EXTERNAL_URL: str | None = None
@@ -462,7 +458,6 @@ class Settings(BaseSettings):
 
     REFERRAL_PROGRAM_ENABLED: bool = True
     REFERRAL_NOTIFICATIONS_ENABLED: bool = True
-    REFERRAL_NOTIFICATION_RETRY_ATTEMPTS: int = 3
 
     # Схема наград: 'legacy' — прежнее поведение на ключах REFERRAL_* выше,
     # 'levels' — таблица referral_reward_levels (деньги и/или дни, много уровней).
@@ -820,6 +815,22 @@ class Settings(BaseSettings):
     PLATEGA_WEBHOOK_HOST: str = '0.0.0.0'
     PLATEGA_WEBHOOK_PORT: int = 8086
     PLATEGA_RECURRENT_ENABLED: bool = False  # Рекуррентные СБП-подписки Platega (автопродление)
+
+    # PayHot production hosted RUB checkout.
+    PAYHOT_ENABLED: bool = False
+    PAYHOT_RECURRENT_ENABLED: bool = False
+    PAYHOT_DISPLAY_NAME: str = 'PayHot'
+    PAYHOT_API_URL: str = 'https://app.pay.hot/api/v2'
+    PAYHOT_API_KEY: str | None = None
+    PAYHOT_WEBHOOK_SECRET: str | None = None
+    PAYHOT_PREVIOUS_WEBHOOK_SECRET: str | None = None
+    PAYHOT_PAYMENT_METHODS: str = 'card,sbp,sberpay,crypto,applepay,googlepay'
+    PAYHOT_MIN_AMOUNT_KOPEKS: int = 10000
+    PAYHOT_MAX_AMOUNT_KOPEKS: int = 100000000
+    PAYHOT_REQUEST_TIMEOUT: int = 30
+    PAYHOT_WEBHOOK_PATH: str = '/payhot-webhook'
+    PAYHOT_SUCCESS_URL: str | None = None
+    PAYHOT_FAIL_URL: str | None = None
 
     # Anore hosted checkout (RUB). Limits below are local operator policy.
     ANORE_ENABLED: bool = False
@@ -1271,6 +1282,8 @@ class Settings(BaseSettings):
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
+    # Trusted alternate subscription origins: Label|https://mirror.example;Label2|https://other.example
+    SUBSCRIPTION_MIRROR_LINKS: str = ''
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
     # Короткое имя Telegram Mini App (BotFather → /newapp), напр. 'cabinet'.
@@ -3404,6 +3417,30 @@ class Settings(BaseSettings):
         if not self.WEBHOOK_URL:
             return None
         return f'{self.WEBHOOK_URL.rstrip("/")}{self.CASHERA_WEBHOOK_PATH}'
+
+    def is_payhot_configured(self) -> bool:
+        return bool(self.PAYHOT_API_KEY and self.PAYHOT_WEBHOOK_SECRET)
+
+    def is_payhot_enabled(self) -> bool:
+        return self.PAYHOT_ENABLED and self.is_payhot_configured() and bool(self.get_payhot_methods())
+
+    def get_payhot_methods(self) -> list[str]:
+        allowed = {'card', 'sbp', 'sberpay', 'crypto', 'applepay', 'googlepay'}
+        return list(
+            dict.fromkeys(
+                method.strip().lower()
+                for method in self.PAYHOT_PAYMENT_METHODS.split(',')
+                if method.strip().lower() in allowed
+            )
+        )
+
+    def get_payhot_display_name(self) -> str:
+        from app.services.payment_method_config_service import get_display_name_override
+
+        return get_display_name_override('payhot') or (self.PAYHOT_DISPLAY_NAME or '').strip() or 'PayHot'
+
+    def get_payhot_display_name_html(self) -> str:
+        return html.escape(self.get_payhot_display_name())
 
     def is_anore_configured(self) -> bool:
         account_key = (self.ANORE_API_KEY or '').startswith('an_')

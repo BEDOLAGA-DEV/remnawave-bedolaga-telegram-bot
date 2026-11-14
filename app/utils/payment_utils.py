@@ -387,6 +387,19 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 }
             )
 
+    if settings.is_payhot_enabled():
+        for method in settings.get_payhot_methods():
+            name = f'{settings.get_payhot_display_name()} — { {"sbp": "СБП", "card": "Карта", "sberpay": "SberPay", "applepay": "Apple Pay", "googlepay": "Google Pay", "crypto": "Криптовалюта"}[method] }'
+            methods.append(
+                {
+                    'id': f'payhot_{method}',
+                    'name': name,
+                    'icon': '💳',
+                    'description': f'через {name}',
+                    'callback': f'topup_payhot_{method}',
+                }
+            )
+
     if settings.is_tabpay_sbp_enabled():
         sbp_name = settings.get_tabpay_sbp_display_name()
         methods.append(
@@ -715,6 +728,10 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_cispay_crypto_enabled()
     if method_id == 'cispay_card':
         return settings.is_cispay_card_enabled()
+    if method_id == 'payhot':
+        return settings.is_payhot_enabled()
+    if method_id.startswith('payhot_'):
+        return settings.is_payhot_enabled() and method_id[7:] in settings.get_payhot_methods()
     if method_id == 'anore':
         return settings.is_anore_enabled()
     if method_id.startswith('anore_'):

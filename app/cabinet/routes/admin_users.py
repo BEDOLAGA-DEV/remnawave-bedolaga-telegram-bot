@@ -2000,6 +2000,49 @@ async def cancel_user_cispay_recurring(
     return result
 
 
+@router.get('/{user_id}/subscriptions/{sub_id}/payhot-recurring')
+async def get_user_payhot_recurring(
+    user_id: int,
+    sub_id: int,
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    from app.services.payhot_recurrent_checkout import get_payhot_agreement_state
+
+    from .subscription_modules.payhot_recurrent import payhot_error
+
+    try:
+        return await get_payhot_agreement_state(db, user_id=user_id, subscription_id=sub_id)
+    except ValueError as error:
+        raise payhot_error(error) from None
+
+
+@router.post('/{user_id}/subscriptions/{sub_id}/payhot-recurring/cancel')
+async def cancel_user_payhot_recurring(
+    user_id: int,
+    sub_id: int,
+    admin: User = Depends(require_permission('users:subscription')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    from app.services.payhot_recurrent_service import cancel_payhot_agreement
+
+    from .subscription_modules.payhot_recurrent import payhot_error
+
+    try:
+        result = await cancel_payhot_agreement(db, user_id=user_id, subscription_id=sub_id, reason='admin')
+    except ValueError as error:
+        await db.rollback()
+        raise payhot_error(error) from None
+    logger.info(
+        'Admin requested HOT Pay cancellation',
+        admin_id=admin.id,
+        user_id=user_id,
+        subscription_id=sub_id,
+        operation_status=result['status'],
+    )
+    return result
+
+
 @router.post('/{user_id}/subscriptions/{sub_id}/cancel-sbp-recurring')
 async def cancel_user_sbp_recurring(
     user_id: int,

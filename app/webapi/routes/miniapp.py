@@ -59,7 +59,7 @@ from app.database.models import (
 )
 from app.services.faq_service import FaqService
 from app.services.maintenance_service import maintenance_service
-from app.services.payment_method_config_service import get_anore_checkout_policy
+from app.services.payment_method_config_service import get_anore_checkout_policy, get_payhot_checkout_policy
 from app.services.payment_service import PaymentService, get_wata_payment_by_link_id
 from app.services.pricing_engine import PricingEngine
 from app.services.privacy_policy_service import PrivacyPolicyService
@@ -793,6 +793,23 @@ async def get_payment_methods(
                 ],
             )
         )
+
+    payhot_policy = await get_payhot_checkout_policy(db, user)
+    if payhot_policy:
+        methods.append(
+            MiniAppPaymentMethod(
+                id='payhot',
+                icon='💳',
+                requires_amount=True,
+                currency='RUB',
+                min_amount_kopeks=payhot_policy['min_amount_kopeks'],
+                max_amount_kopeks=payhot_policy['max_amount_kopeks'],
+                integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+                options=[
+                    MiniAppPaymentOption(id=option['id'], title=option['name']) for option in payhot_policy['options']
+                ],
+            )
+        )
     if settings.is_wata_enabled():
         methods.append(
             MiniAppPaymentMethod(
@@ -912,6 +929,7 @@ async def get_payment_methods(
         'pal24': 7,
         'platega': 8,
         'wata': 9,
+        'payhot': 10,
         'anore': 10,
         'cryptobot': 10,
         'heleket': 11,
@@ -1153,6 +1171,51 @@ async def create_payment_link(
                 'correlation_id': result.get('correlation_id'),
                 'selected_option': str(method_code),
                 'payload': result.get('payload'),
+                'requested_at': _current_request_timestamp(),
+            },
+        )
+
+    if method == 'payhot':
+        payhot_policy = await get_payhot_checkout_policy(db, user)
+        if payhot_policy is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
+        if amount_kopeks is None or amount_kopeks <= 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
+        if amount_kopeks < payhot_policy['min_amount_kopeks']:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
+        if amount_kopeks > payhot_policy['max_amount_kopeks']:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
+
+        if payload.payment_option and payload.payment_option not in {
+            option['id'] for option in payhot_policy['options']
+        }:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment option is unavailable')
+        payment_service = PaymentService()
+        result = await payment_service.create_payhot_payment(
+            payment_phone=payload.payment_phone,
+            db=db,
+            user_id=user.id,
+            amount_kopeks=amount_kopeks,
+            description=settings.get_balance_payment_description(
+                amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+            ),
+            language=user.language,
+            payment_method_type=payload.payment_option,
+        )
+        payment_url = result.get('payment_url') if result else None
+        if not result or not payment_url:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')
+
+        return MiniAppPaymentCreateResponse(
+            method=method,
+            payment_url=payment_url,
+            amount_kopeks=amount_kopeks,
+            extra={
+                'local_payment_id': result.get('local_payment_id'),
+                'invoice_id': result.get('payment_id'),
+                'payment_id': result.get('payment_id'),
+                'status': result.get('status'),
+                'order_id': result.get('order_id'),
                 'requested_at': _current_request_timestamp(),
             },
         )
@@ -1595,6 +1658,9 @@ async def _resolve_payment_status_entry(
         return await _resolve_mulenpay_payment_status(payment_service, db, user, query)
     if method == 'platega':
         return await _resolve_platega_payment_status(payment_service, db, user, query)
+    if method == 'payhot':
+        return await _resolve_payhot_payment_status(payment_service, db, user, query)
+
     if method == 'anore':
         return await _resolve_anore_payment_status(payment_service, db, user, query)
     if method == 'wata':
@@ -4632,6 +4698,7 @@ def _format_payment_method_title(method: str) -> str:
         'mulenpay': 'MulenPay',
         'pal24': 'Pal24',
         'wata': 'WataPay',
+        'payhot': settings.get_payhot_display_name(),
         'anore': settings.get_anore_display_name(),
         'heleket': 'Heleket',
         'tribute': 'Tribute',
@@ -7051,19 +7118,25 @@ async def preview_tariff_switch_endpoint(
         )
 
     subs = getattr(user, 'subscriptions', None) or []
-    active = [s for s in subs if s.is_active and s.tariff_id]
-    subscription = active[0] if len(active) == 1 else None
-    if not subscription:
-        # If multiple active or none, require explicit subscription_id
-        if hasattr(payload, 'subscription_id') and payload.subscription_id:
-            subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    if payload.subscription_id:
+        subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    else:
+        eligible = [
+            s
+            for s in subs
+            if s.tariff_id and s.status in ('active', 'trial', 'limited') and remaining_days_for_switch(s.end_date) > 0
+        ]
+        subscription = eligible[0] if len(eligible) == 1 else None
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'no_subscription', 'message': 'No active subscription with tariff'},
         )
 
-    if subscription.status not in ('active', 'trial'):
+    if (
+        subscription.status not in ('active', 'trial', 'limited')
+        or remaining_days_for_switch(subscription.end_date) == 0
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
@@ -7173,7 +7246,12 @@ async def switch_tariff_endpoint(
     if payload.subscription_id:
         subscription = next((s for s in subs if s.id == payload.subscription_id), None)
     else:
-        subscription = next((s for s in subs if s.is_active and s.tariff_id), None)
+        eligible = [
+            s
+            for s in subs
+            if s.tariff_id and s.status in ('active', 'trial', 'limited') and remaining_days_for_switch(s.end_date) > 0
+        ]
+        subscription = eligible[0] if len(eligible) == 1 else None
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -7194,7 +7272,10 @@ async def switch_tariff_endpoint(
         if existing_target and existing_target.id != subscription.id:
             raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
-    if subscription.status not in ('active', 'trial'):
+    if (
+        subscription.status not in ('active', 'trial', 'limited')
+        or remaining_days_for_switch(subscription.end_date) == 0
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
@@ -7396,6 +7477,12 @@ async def switch_tariff_endpoint(
         else:
             logger.info('🔄 Смена с суточного на обычный тариф: очищены daily поля')
 
+    # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+    # грейс удержит Telegram-only оверлей в панели.
+    from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+    lift_traffic_limit_after_switch(subscription)
+
     if accounting_panel is not None:
         from app.services.traffic_accounting_service import change_managed_tariff_locked
 
@@ -7587,7 +7674,12 @@ async def purchase_traffic_topup_endpoint(
         subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=payload.gb)
     except Exception as error:
         await db.rollback()
-        raise HTTPException(status_code=503, detail='Traffic accounting is temporarily unavailable') from error
+        # Preflight failed before any charge or grant. Do not report an
+        # ambiguous gateway outcome to a client deciding whether to retry.
+        raise HTTPException(
+            status_code=409,
+            detail='Traffic purchase was not applied. No funds were charged. Please try again.',
+        ) from error
 
     user = await lock_user_for_pricing(db, user.id)
 
@@ -8030,4 +8122,37 @@ async def _resolve_anore_payment_status(
         external_id=payment.anore_payment_id,
         message='Sandbox payment: no funds credited' if payment.is_test else None,
         extra={'local_payment_id': payment.id, 'payment_id': payment.anore_payment_id, 'order_id': payment.order_id},
+    )
+
+
+async def _resolve_payhot_payment_status(
+    payment_service: PaymentService,
+    db: AsyncSession,
+    user: User,
+    query: MiniAppPaymentStatusQuery,
+) -> MiniAppPaymentStatusResult:
+    from app.database.crud.payhot import get_payhot_payment_by_id, get_payhot_payment_by_invoice_id
+
+    payment = None
+    if query.local_payment_id:
+        payment = await get_payhot_payment_by_id(db, query.local_payment_id)
+    elif query.payment_id or query.invoice_id:
+        payment = await get_payhot_payment_by_invoice_id(db, query.payment_id or query.invoice_id)
+    # Ownership is checked before contacting the provider or changing accounting.
+    if payment is None or payment.user_id != user.id:
+        return MiniAppPaymentStatusResult(method='payhot', status='pending', is_paid=False, message='Payment not found')
+    result = await payment_service.check_payhot_payment_status(db, payment.id)
+    paid = bool((result or {}).get('is_paid'))
+    state = _classify_status((result or {}).get('status') or payment.status, paid)
+    return MiniAppPaymentStatusResult(
+        method='payhot',
+        status=state,
+        is_paid=paid,
+        amount_kopeks=payment.amount_kopeks,
+        currency=payment.currency,
+        completed_at=payment.paid_at,
+        transaction_id=payment.transaction_id,
+        external_id=payment.payhot_payment_id,
+        message=None,
+        extra={'local_payment_id': payment.id, 'payment_id': payment.payhot_payment_id, 'order_id': payment.order_id},
     )

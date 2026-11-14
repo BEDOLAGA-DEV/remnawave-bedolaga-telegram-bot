@@ -563,7 +563,7 @@ async def show_referral_settings(callback: types.CallbackQuery, db_user: User, d
         get_texts(db_user.language)
         .t(
             'ADMIN_REFERRALS_UI_001',
-            '\n⚙️ <b>Настройки реферальной системы</b>\n\n<b>Бонусы и награды:</b>\n• Минимальная сумма пополнения для участия: {v0}\n• Бонус за первое пополнение реферала: {v1}\n• Бонус пригласившему за первое пополнение: {v2}\n\n<b>Комиссионные:</b>\n• Процент с каждой покупки реферала: {v3}%\n\n<b>Уведомления:</b>\n• Статус: {v4}\n• Попытки отправки: {v5}\n\n{v6}\n',
+            '\n⚙️ <b>Настройки реферальной системы</b>\n\n<b>Бонусы и награды:</b>\n• Минимальная сумма пополнения для участия: {v0}\n• Бонус за первое пополнение реферала: {v1}\n• Бонус пригласившему за первое пополнение: {v2}\n\n<b>Комиссионные:</b>\n• Процент с каждой покупки реферала: {v3}%\n\n<b>Уведомления:</b>\n• Статус: {v4}\n\n{v6}\n',
         )
         .format(
             v0=settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
@@ -573,7 +573,6 @@ async def show_referral_settings(callback: types.CallbackQuery, db_user: User, d
             v4=get_texts(db_user.language).t('ADMIN_REFERRALS_UI_074', '✅ Включены')
             if settings.REFERRAL_NOTIFICATIONS_ENABLED
             else get_texts(db_user.language).t('ADMIN_REFERRALS_UI_075', '❌ Отключены'),
-            v5=getattr(settings, 'REFERRAL_NOTIFICATION_RETRY_ATTEMPTS', 3),
             v6=_settings_hint(language=db_user.language),
         )
     )
