@@ -42,6 +42,7 @@ from app.services.panel_sync import (
     read_panel_user,
 )
 from app.services.panel_sync.db_session import release_transaction, rollback_quietly
+from app.utils.cache import SystemCache
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
     device_limit_needs_heal,
@@ -607,6 +608,9 @@ class RemnaWaveService:
             return None, False
 
     async def get_system_statistics(self) -> dict[str, Any]:
+        cached = await SystemCache.get_system_stats()
+        if cached is not None:
+            return cached
         try:
             async with self.get_api_client() as api:
                 logger.info('Получение системной статистики RemnaWave...')
@@ -774,6 +778,7 @@ class RemnaWaveService:
                     result=result['system']['total_users'],
                     total_user_traffic=total_user_traffic,
                 )
+                await SystemCache.set_system_stats(result, expire=60)
                 return result
 
         except RemnaWaveAPIError as e:
