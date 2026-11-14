@@ -332,6 +332,14 @@ async def shutdown_bot():
         logger.error('Ошибка остановки мониторинга', error=e)
 
     try:
+        from app.external.remnawave_api import RemnaWaveAPI
+
+        await RemnaWaveAPI.close_shared_sessions()
+        logger.info('Общие HTTP-сессии Remnawave закрыты')
+    except Exception as e:
+        logger.error('Ошибка закрытия HTTP-сессий Remnawave', error=e)
+
+    try:
         await cache.close()
         logger.info('Соединения с кешем закрыты')
     except Exception as e:

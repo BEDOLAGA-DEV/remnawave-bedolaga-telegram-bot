@@ -442,6 +442,12 @@ class RemnaWaveAPI:
     # Моменты последних запросов процесса — окно собственного темпа (см. PACE_WINDOW_SECONDS).
     _request_times: ClassVar[deque[float]] = deque()
     _pace_clock = staticmethod(time.monotonic)
+    # Общие HTTP-сессии процесса. Ключ — (base_url, auth_type, api_key, secret_key,
+    # caddy_token, username, password): один живой ClientSession на уникальную панель,
+    # keep-alive пулом TCPConnector. Без переиспользования каждый вызов панели выполнял
+    # TLS-handshake заново и разгонял рост RSS у `rw-api` под реальным HTTPS.
+    _shared_sessions: ClassVar[dict[tuple, aiohttp.ClientSession]] = {}
+    _shared_sessions_lock: ClassVar[asyncio.Lock | None] = None
 
     @classmethod
     def _throttle(cls, delay: float) -> None:
@@ -537,10 +543,29 @@ class RemnaWaveAPI:
 
         return headers
 
-    async def __aenter__(self):
+    @classmethod
+    def _get_shared_lock(cls) -> asyncio.Lock:
+        # Лениво — на уровне модуля asyncio.Lock() требует running loop только при `async with`,
+        # но создание до старта loop ломает тесты, где лок создаётся в одном loop, а используется в другом.
+        if cls._shared_sessions_lock is None:
+            cls._shared_sessions_lock = asyncio.Lock()
+        return cls._shared_sessions_lock
+
+    def _session_cache_key(self) -> tuple:
+        return (
+            self.base_url,
+            self.auth_type,
+            self.api_key,
+            self.secret_key,
+            self.caddy_token,
+            self.username,
+            self.password,
+        )
+
+    def _build_session(self) -> aiohttp.ClientSession:
         conn_type = self._detect_connection_type()
 
-        logger.debug('Подключение к Remnawave: (тип: )', base_url=self.base_url, conn_type=conn_type)
+        logger.debug('Создаём общую HTTP-сессию Remnawave', base_url=self.base_url, conn_type=conn_type)
 
         headers = self._prepare_auth_headers()
 
@@ -554,7 +579,16 @@ class RemnaWaveAPI:
                 cookies = {self.secret_key: self.secret_key}
                 logger.debug('Используем куки: =***', secret_key=self.secret_key)
 
-        connector_kwargs = {}
+        # keep-alive пул: `rw-api` под реальным HTTPS тяжелее всего реагирует именно на
+        # поток новых TLS-handshake-ов, а не на сами запросы. Ограничиваем общее число
+        # одновременных коннектов до панели (20 достаточно и для админки, и для фоновых
+        # циклов) и держим idle-коннекты минуту — это окно перекрывает интервалы между
+        # get_system_statistics из разных мест.
+        connector_kwargs: dict[str, Any] = {
+            'limit': 20,
+            'keepalive_timeout': 60,
+            'enable_cleanup_closed': True,
+        }
 
         if conn_type == 'local':
             logger.debug('Используют локальные заголовки proxy')
@@ -572,7 +606,7 @@ class RemnaWaveAPI:
 
         connector = aiohttp.TCPConnector(**connector_kwargs)
 
-        session_kwargs = {
+        session_kwargs: dict[str, Any] = {
             'timeout': aiohttp.ClientTimeout(
                 total=settings.REMNAWAVE_API_TOTAL_TIMEOUT,
                 connect=settings.REMNAWAVE_API_CONNECT_TIMEOUT,
@@ -584,14 +618,42 @@ class RemnaWaveAPI:
         if cookies:
             session_kwargs['cookies'] = cookies
 
-        self.session = aiohttp.ClientSession(**session_kwargs)
-        self.authenticated = True
+        return aiohttp.ClientSession(**session_kwargs)
 
+    async def _get_or_create_session(self) -> aiohttp.ClientSession:
+        key = self._session_cache_key()
+        lock = self._get_shared_lock()
+        async with lock:
+            session = RemnaWaveAPI._shared_sessions.get(key)
+            if session is None or session.closed:
+                session = self._build_session()
+                RemnaWaveAPI._shared_sessions[key] = session
+        return session
+
+    @classmethod
+    async def close_shared_sessions(cls) -> None:
+        """Закрыть все общие HTTP-сессии. Вызывать на graceful shutdown процесса."""
+        lock = cls._get_shared_lock()
+        async with lock:
+            sessions = list(cls._shared_sessions.values())
+            cls._shared_sessions.clear()
+        for session in sessions:
+            if not session.closed:
+                try:
+                    await session.close()
+                except Exception as error:
+                    logger.warning('Ошибка закрытия общей HTTP-сессии Remnawave', error=error)
+
+    async def __aenter__(self):
+        self.session = await self._get_or_create_session()
+        self.authenticated = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            await self.session.close()
+        # Сессия общая на весь процесс — не закрываем, только отвязываемся от инстанса.
+        # Закрытие — через RemnaWaveAPI.close_shared_sessions() на shutdown.
+        self.session = None
+        self.authenticated = False
 
     async def _make_request(
         self,
