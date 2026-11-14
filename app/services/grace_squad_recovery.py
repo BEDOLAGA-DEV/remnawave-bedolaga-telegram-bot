@@ -58,6 +58,10 @@ async def repair_deleted_grace_squad(api, session, replacement):
             user_id=session.remnawave_id,
             squads=[replacement],
             external_squad_uuid=original.external_squad_uuid,
+            # Без подписки не отфильтровать сквады, снятые за перерасход
+            # премиум-лимита: восстановление вернуло бы клиенту доступ, за
+            # который он не платил.
+            subscription_id=session.subscription_id,
         )
         if updated is None or not panel_matches_overlay(_panel_user_to_snapshot(updated), candidate, now=now):
             raise GracePanelError('Panel did not confirm replacement grace squad')
