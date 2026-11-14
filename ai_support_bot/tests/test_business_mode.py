@@ -207,20 +207,23 @@ async def test_business_escalation_admin_notification_uses_regular_bot(service):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('case', ['photo_disabled', 'generation_error'])
-async def test_business_validation_and_error_replies_keep_connection(service, monkeypatch, case):
+async def test_business_validation_replies_keep_connection(service, monkeypatch):
     bot, _, requests, agent = service
-    msg = message()
-    if case == 'photo_disabled':
-        msg = message(text=None, photo=[{'file_id': 'photo', 'file_unique_id': 'unique', 'width': 10, 'height': 10}])
-    elif case == 'generation_error':
-        agent.side_effect = OpenAIError('Unavailable')
+    msg = message(text=None, photo=[{'file_id': 'photo', 'file_unique_id': 'unique', 'width': 10, 'height': 10}])
     await dispatch(bot, msg)
     sent = [r for r in requests if isinstance(r, SendMessage)]
     assert len(sent) == 1
     assert sent[0].chat_id == 555
     assert sent[0].business_connection_id == 'business-1'
     assert not any(isinstance(r, ReadBusinessMessage) for r in requests)
+
+
+@pytest.mark.asyncio
+async def test_business_generation_error_sends_nothing_from_owner_account(service):
+    bot, _, requests, agent = service
+    agent.side_effect = OpenAIError('Unavailable')
+    await dispatch(bot, message())
+    assert not any(isinstance(r, (SendMessage, ReadBusinessMessage)) for r in requests)
 
 
 @pytest.mark.asyncio

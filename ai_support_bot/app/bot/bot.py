@@ -1,16 +1,17 @@
 import asyncio
 import base64
 import io
+import re
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from html import escape
+from html import escape, unescape
 
 import structlog
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ChatAction
+from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import (
@@ -46,6 +47,12 @@ _processed_updates: dict[tuple[str | None, int, int], float] = {}
 _PROCESSED_TTL = 300
 _business_turn: ContextVar[tuple[int, int] | None] = ContextVar('business_turn', default=None)
 _message_queue = MessageQueue()
+
+# Telegram rejects longer messages; counted in UTF-16 units of the raw HTML, which is never shorter
+# than the parsed text, so every chunk is accepted.
+TELEGRAM_TEXT_LIMIT = 4096
+_HTML_TOKEN = re.compile(r'<[^<>]*>|&#?\w{1,32};|[^<&]+|[<&]')
+_HTML_TAG = re.compile(r'<\s*(/?)\s*([a-zA-Z][\w-]*)')
 
 
 async def _turn_active() -> bool:
@@ -150,8 +157,137 @@ def _admin_recipients(exclude_telegram_id: int | None = None) -> list[int]:
     return recipients
 
 
+def _utf16_len(text: str) -> int:
+    return len(text.encode('utf-16-le')) // 2
+
+
+def _fitting_prefix(text: str, budget: int, hard_cut: bool = True) -> int:
+    """Length of the longest prefix within the UTF-16 budget, cut after a line or word break when possible."""
+    used, end = 0, len(text)
+    for index, char in enumerate(text):
+        used += 2 if ord(char) > 0xFFFF else 1
+        if used > budget:
+            end = index
+            break
+    if end == len(text):
+        return end
+    for separator in ('\n', ' '):
+        position = text.rfind(separator, 0, end)
+        if position > 0 and position >= end // 2:
+            return position + 1
+    return end if hard_cut else 0
+
+
+def _split_plain(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    chunks = []
+    while text:
+        cut = _fitting_prefix(text, limit) or 1
+        chunk, text = text[:cut], text[cut:]
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
+
+
+def _split_html(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str] | None:
+    """Split Telegram HTML into messages within the limit without cutting a tag or an entity.
+
+    Tags open at a cut are closed at the end of one chunk and reopened at the start of the next.
+    Returns None when the markup cannot be split this way; the caller then sends plain text.
+    """
+    if _utf16_len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    stack: list[tuple[str, str]] = []
+    current, fresh = '', True
+
+    def closing(extra: str = '') -> int:
+        return _utf16_len(extra + ''.join(f'</{name}>' for name, _ in stack))
+
+    def flush() -> None:
+        nonlocal current, fresh
+        chunk = current + ''.join(f'</{name}>' for name, _ in reversed(stack))
+        if re.sub(r'<[^<>]*>', '', chunk).strip():
+            chunks.append(chunk)
+        current, fresh = ''.join(tag for _, tag in stack), True
+
+    for token in _HTML_TOKEN.findall(text):
+        tag = _HTML_TAG.match(token) if token.startswith('<') and token.endswith('>') else None
+        if tag is not None and tag.group(1):
+            name = tag.group(2).lower()
+            for index in range(len(stack) - 1, -1, -1):
+                if stack[index][0] == name:
+                    del stack[index]
+                    break
+            current += token  # its length was already reserved as part of the closing tags
+            continue
+        if tag is None and not token.startswith(('&', '<')):
+            while token:
+                cut = _fitting_prefix(token, limit - _utf16_len(current) - closing(), hard_cut=fresh)
+                if cut <= 0:
+                    if fresh:
+                        return None
+                    flush()
+                    continue
+                current, token, fresh = current + token[:cut], token[cut:], False
+                if token:
+                    flush()
+            continue
+        opening = tag is not None and not token.endswith('/>')
+        extra = f'</{tag.group(2).lower()}>' if opening else ''
+        if _utf16_len(current + token) + closing(extra) > limit:
+            if fresh:
+                return None
+            flush()
+            if _utf16_len(current + token) + closing(extra) > limit:
+                return None
+        current += token
+        fresh = False
+        if opening:
+            stack.append((tag.group(2).lower(), token))
+    if not fresh:
+        flush()
+    return chunks
+
+
+def _html_to_plain(text: str) -> str:
+    return unescape(re.sub(r'<[^<>]*>', '', text))
+
+
+async def _send_notification(bot: Bot, chat_id: int, text: str, options: dict) -> int:
+    """Send a possibly long HTML notification in parts; buttons go with the last part.
+
+    Returns the id of the first part, which attachments reply to. Raises when a part is not delivered.
+    """
+    pending = _split_html(text)
+    parse_mode = 'HTML'
+    if pending is None:
+        pending, parse_mode = _split_plain(_html_to_plain(text)), None
+    first_id = None
+    while pending:
+        chunk = pending.pop(0)
+        extra = options if not pending else {}
+        try:
+            sent = await bot.send_message(chat_id, chunk, parse_mode=parse_mode, **extra)
+        except TelegramBadRequest as error:
+            if parse_mode is None or 'parse entities' not in str(error).lower():
+                raise
+            pending, parse_mode = _split_plain(_html_to_plain(''.join([chunk, *pending]))), None
+            continue
+        if first_id is None:
+            first_id = sent.message_id
+    return first_id
+
+
+async def _alert(key: str, title: str, details: str, hint: str) -> None:
+    try:
+        await alerting.alert_admins(key, title, details, hint=hint)
+    except Exception as error:
+        logger.warning('Failed to raise admin alert', alert_key=key, error=str(error))
+
+
 async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = None, photo: str | None = None,
-                         photos: list[str] | None = None) -> None:
+                         photos: list[str] | None = None) -> bool:
+    """Deliver a service notification; True when at least one recipient received all of it."""
     recipients = set(_admin_recipients(exclude_telegram_id))
     options = {}
     turn = _business_turn.get()
@@ -162,16 +298,34 @@ async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = 
             if control.owner_id != exclude_telegram_id:
                 recipients.add(control.owner_id)
             text += f'\n\n<b>Чат обращения:</b> <code>{control.chat_id}</code>'
+    delivered = 0
+    failure: Exception | None = None
     for admin_id in sorted(recipients):
         try:
-            notification = await bot.send_message(admin_id, text, parse_mode='HTML', **options)
-            for attachment in photos or ([photo] if photo else []):
+            notification_id = await _send_notification(bot, admin_id, text, options)
+        except Exception as err:
+            failure = err
+            logger.error('Failed to notify admin', admin_id=admin_id, error=str(err), length=len(text))
+            continue
+        delivered += 1
+        for attachment in photos or ([photo] if photo else []):
+            try:
                 await bot.send_photo(
                     admin_id, attachment, caption=f'Вложение к обращению пользователя {exclude_telegram_id}',
-                    reply_parameters=ReplyParameters(message_id=notification.message_id),
+                    reply_parameters=ReplyParameters(message_id=notification_id),
                 )
-        except Exception as err:
-            logger.warning('Failed to notify admin', admin_id=admin_id, error=str(err))
+            except Exception as err:
+                logger.warning('Failed to send attachment to admin', admin_id=admin_id, error=str(err))
+    if not delivered:
+        logger.error('Admin notification was not delivered to anyone', recipients=len(recipients))
+        if failure is not None:
+            description = getattr(failure, 'message', '') if isinstance(failure, TelegramAPIError) else ''
+            await _alert(
+                'notification_delivery', 'уведомление команде не доставлено',
+                f'Получателей: {len(recipients)}, доставлено: 0. Ошибка: {type(failure).__name__} {description}'[:300],
+                'Обращения клиентов не доходят до команды — проверьте логи бота поддержки и AISUP_ADMIN_IDS.',
+            )
+    return delivered > 0
 
 
 async def _answer_safely(message: Message, text: str) -> bool:
@@ -227,6 +381,9 @@ async def _handle_daily_limit(
 
 
 async def queue_message(message: Message, business_connection: BusinessConnection | None = None) -> None:
+    # Answers contain balance and personal subscription links, so groups and channels never get them.
+    if getattr(message.chat, 'type', ChatType.PRIVATE) != ChatType.PRIVATE:
+        return
     if message.from_user is None or _is_duplicate_update(message):
         return
     await settings_store.load()
@@ -245,6 +402,35 @@ async def queue_message(message: Message, business_connection: BusinessConnectio
         )
     except OverflowError:
         await _answer_safely(message, 'Слишком много сообщений подряд. Дождитесь ответа на уже отправленные.')
+
+
+def _failure_reason(error: Exception) -> str:
+    """Short reason for admins: exception type, HTTP status and API code; never the message, keys or URLs."""
+    parts = [type(error).__name__]
+    if isinstance(error, OpenAIError):
+        if error.status:
+            parts.append(f'HTTP {error.status}')
+        if error.code:
+            parts.append(f'код {error.code}')
+    return ', '.join(parts)
+
+
+async def _report_generation_failure(message: Message, error: Exception, business: bool) -> None:
+    model_error = isinstance(error, OpenAIError)
+    reason = _failure_reason(error)
+    mode = 'секретарь, клиенту ничего не отправлено' if business else 'бот поддержки, клиент получил «Попробуйте позже»'
+    await _alert(
+        f'generation:{reason}',
+        'модель не ответила' if model_error else 'ошибка при подготовке ответа',
+        f'{reason}\nРежим: {mode}',
+        'Клиенты не получают ответы ИИ — проверьте ключ, баланс и доступность OpenAI.' if model_error
+        else 'Клиенты не получают ответы ИИ — проверьте логи бота поддержки.',
+    )
+    # In secretary mode the reply would come from the owner's own account: a technical error there
+    # looks broken, so the customer gets nothing and the owner answers manually.
+    if not business:
+        notice = '⚠️ Не удалось получить ответ.' if model_error else '⚠️ Произошла ошибка.'
+        await _answer_safely(message, f'{notice} Попробуйте позже.')
 
 
 async def handle_message(message: Message, business_connection: BusinessConnection | None = None,
@@ -299,11 +485,11 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
                 result = await support_agent.generate_answer(db, telegram_id, question, image_url=image_url, **options)
     except OpenAIError as error:
         logger.error('Generation failed', error=str(error), telegram_id=telegram_id)
-        await _answer_safely(message, '⚠️ Не удалось получить ответ. Попробуйте позже.')
+        await _report_generation_failure(message, error, business_connection is not None)
         return
     except Exception as error:
-        logger.error('Unexpected error', error=str(error), telegram_id=telegram_id)
-        await _answer_safely(message, '⚠️ Произошла ошибка. Попробуйте позже.')
+        logger.error('Unexpected error', error=str(error), error_type=type(error).__name__, telegram_id=telegram_id)
+        await _report_generation_failure(message, error, business_connection is not None)
         return
 
     answer = result['answer'] or 'Не удалось сформировать ответ.'
@@ -330,10 +516,6 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             logger.warning('Failed to mark business message as read', error=str(error), chat_id=message.chat.id)
 
     if result['escalate']:
-        if business_connection is not None:
-            turn = _business_turn.get()
-            if turn is not None:
-                await business_control.set_manual(turn[0], True)
         logger.info(
             'Escalating question to admins',
             telegram_id=telegram_id,
@@ -363,8 +545,16 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
         )
         if result.get('support_context'):
             notify_text += '\n\n' + escape(result['support_context'])
-        await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id, photo=result.get('support_photo'),
-                             photos=result.get('support_photos'))
+        delivered = await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id,
+                                         photo=result.get('support_photo'), photos=result.get('support_photos'))
+        turn = _business_turn.get() if business_connection is not None else None
+        if turn is not None:
+            # Pause only when someone got the handoff with the «Вернуть ИИ» button, otherwise the chat
+            # would stay silent forever without anyone knowing.
+            if delivered:
+                await business_control.set_manual(turn[0], True)
+            else:
+                logger.error('Handoff not delivered, AI stays active in business chat', chat_id=message.chat.id)
 
 
 async def handle_business_connection(connection: BusinessConnection) -> None:
@@ -450,8 +640,10 @@ async def handle_control_callback(query: CallbackQuery) -> None:
 
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
-    dp.message.register(cmd_start, Command('start'))
-    dp.message.register(queue_message, F.text | F.photo | F.caption)
+    # Only private chats: in a group the answer (balance, subscription link) would be visible to everyone.
+    private = F.chat.type == ChatType.PRIVATE
+    dp.message.register(cmd_start, private, Command('start'))
+    dp.message.register(queue_message, private, F.text | F.photo | F.caption)
     dp.business_connection.register(handle_business_connection)
     dp.business_message.register(handle_business_message)
     dp.edited_business_message.register(handle_business_edit)

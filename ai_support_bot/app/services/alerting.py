@@ -34,7 +34,10 @@ def _throttled(key: str) -> bool:
     return False
 
 
-async def alert_admins(key: str, title: str, details: str) -> None:
+_DEFAULT_HINT = 'Бот продолжает отвечать, но без части данных — проверьте логи и схему БД.'
+
+
+async def alert_admins(key: str, title: str, details: str, hint: str | None = None) -> None:
     logger.error('degradation alert', alert_key=key, title=title, details=details)
 
     if not settings_store.get_bool('ALERT_ADMINS_ON_FAILURE'):
@@ -47,7 +50,7 @@ async def alert_admins(key: str, title: str, details: str) -> None:
     message = (
         f'🛑 <b>Сбой ИИ-поддержки: {_escape(title)}</b>\n\n'
         f'<code>{_escape(details[:900])}</code>\n\n'
-        'Бот продолжает отвечать, но без части данных — проверьте логи и схему БД.'
+        f'{_escape(hint or _DEFAULT_HINT)}'
     )
     for admin_id in settings.admin_ids:
         try:
