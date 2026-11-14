@@ -12,6 +12,7 @@ os.environ.setdefault('AISUP_MAIN_DATABASE_URL', '')
 os.environ.setdefault('AISUP_INCLUDE_REMNAWAVE_DATA', 'false')
 
 from ai_support_bot.app.core.config import ESCALATION_MARKER
+from ai_support_bot.app.services.emoji_style import decorate
 
 
 USER_CONTEXT = (
@@ -132,7 +133,7 @@ async def test_marker_at_end_triggers_escalation_and_is_stripped(flow):
 
     assert result['escalate'] is True
     assert ESCALATION_MARKER not in result['answer']
-    assert result['answer'] == 'Здравствуйте!\n\nУточняю этот вопрос, подождите.'
+    assert result['answer'] == 'Здравствуйте!\n\n' + decorate('Уточняю этот вопрос, подождите.', lead='🎧')
 
 
 @pytest.mark.asyncio
@@ -842,7 +843,7 @@ async def test_repeated_diagnostics_become_handoff_with_attachment(flow, with_ph
         result = await agent_mod.support_agent.generate_answer(db, 4242, '' if with_photo else 'не работает', **options)
     assert result['escalate']
     assert result['escalation_reason'] == 'repeated_diagnostics'
-    assert result['answer'] == agent_mod.NOTICE
+    assert result['answer'] == decorate(agent_mod.NOTICE, lead='🎧')
     if with_photo:
         assert result['support_photo'] == 'repeat-photo'
 

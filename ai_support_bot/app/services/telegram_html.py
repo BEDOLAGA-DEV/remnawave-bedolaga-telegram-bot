@@ -4,6 +4,8 @@ from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from ai_support_bot.app.services.emoji_style import CUSTOM_EMOJI_IDS
+
 
 # Links the model may show to a customer. A domain also allows its subdomains (personal subscription links
 # live on connect.sligvpn.ru, the cabinet on web.slig.app). Sources: support_policy.py, response_rules.py,
@@ -126,6 +128,11 @@ class _TelegramHTML(HTMLParser):
             if valid and is_allowed_link(href):
                 self.parts.append(f'<a href="{escape(href, quote=True)}">')
                 self.stack.append('a')
+        elif tag == 'tg-emoji':
+            emoji_id = dict(attrs).get('emoji-id') or ''
+            if emoji_id in CUSTOM_EMOJI_IDS:
+                self.parts.append(f'<tg-emoji emoji-id="{emoji_id}">')
+                self.stack.append(tag)
         elif tag == 'br':
             self.parts.append('\n')
 

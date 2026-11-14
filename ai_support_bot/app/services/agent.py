@@ -23,6 +23,7 @@ from ai_support_bot.app.services.dialogue_tools import (
     support_details_for_admin,
     support_state_block,
 )
+from ai_support_bot.app.services.emoji_style import decorate
 from ai_support_bot.app.services.knowledge_parser import compute_content_hash
 from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
@@ -75,6 +76,13 @@ from ai_support_bot.app.services.user_data import build_user_context, resolve_us
 logger = structlog.get_logger(__name__)
 
 _ESCALATION_MARKER = ESCALATION_MARKER
+
+# Disputes, refunds, cancellations and payment checks keep a plain tone: no emoji at all.
+_SERIOUS_REASONS = {
+    'unrecognized_charge', 'subscription_cancellation', 'subscription_restricted', 'payment_review',
+    'payment_dispute', 'refund', 'partnership',
+}
+_LEAD_EMOJI = {'apps': '🚀', 'recovery': '🛡', 'navigation': '🌐', 'wheel': '🎁'}
 
 _SMALLTALK_PATTERNS = (
     r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
@@ -449,6 +457,7 @@ class SupportAgent:
                 forced_reason = recovery_reason
         scope_answer = boundary_answer(question)
         direct_answer = (None if forced_reason else scope_answer) or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
+        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'apps'
         if direct_answer and support_state.get('issue') == 'payment_activation':
             support_state = {'issue': 'other'}
         if not forced_reason and wheel_reward_request(question, history, support_state):
@@ -456,6 +465,7 @@ class SupportAgent:
                 support_state['email'] = scope_email
             await execute_support_tool('recover_wheel_rewards', '{}', telegram_id, support_state, question)
             direct_answer, handoff = wheel_reward_answer(support_state['_wheel_result'])
+            direct_kind = 'wheel'
             if handoff:
                 forced_reason = 'wheel_reward_review'
         if not forced_reason and not direct_answer and not smalltalk and (
@@ -465,7 +475,7 @@ class SupportAgent:
                 support_state['email'] = scope_email
             await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
         if switched_question == '' and not image_url:
-            direct_answer = 'Напишите ваш новый вопрос.'
+            direct_answer, direct_kind = 'Напишите ваш новый вопрос.', None
         if smalltalk and not forced_reason and not direct_answer:
             direct_answer = smalltalk_answer(question)
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
@@ -479,6 +489,7 @@ class SupportAgent:
                 nav_query, await resolve_user_language(telegram_id),
                 ttl_seconds=settings_store.get_int('NAVIGATION_TTL'),
             )
+            direct_kind = 'navigation' if direct_answer else direct_kind
             if direct_answer and is_topup_without_renewal(question):
                 direct_answer = 'Пополнение баланса и продление — разные операции. Само пополнение не означает немедленного продления подписки.\n\nДля ручного продления:\n' + direct_answer
         supplied_details = {}
@@ -711,6 +722,10 @@ class SupportAgent:
         if not re.sub(r'<[^>]*>', '', answer_text).strip():
             answer_text = NOTICE
             escalate = True
+        serious = bool({escalation_reason, forced_reason} & _SERIOUS_REASONS or support_state.get('renewal_verification')
+                       or support_state.get('issue') in {'payment_missing', 'payment_activation'})
+        lead = '🎧' if escalate else _LEAD_EMOJI.get(direct_kind) if model_used == 'rules' else None
+        answer_text = decorate(answer_text, lead=lead, plain=serious)
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,
