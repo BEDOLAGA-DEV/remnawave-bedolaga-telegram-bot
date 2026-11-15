@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud import device_block as crud
 from app.database.crud.system_setting import get_setting_value, upsert_system_setting
-from app.database.models import DeviceBlock, User
+from app.database.models import DeviceBlock, Subscription, User
 from app.localization.texts import get_texts
 
 
@@ -315,19 +315,24 @@ class DeviceBlockService:
 
     async def _resolve_short_uuid(self, remnawave_uuid: str | None) -> str | None:
         """Resolve the Remnawave public subscription key (short UUID) for a panel
-        UUID. Best-effort: returns None on any failure (→ global ban)."""
+        UUID from the bot's own `subscriptions` table. The panel has no
+        get-user-by-uuid endpoint (only by id / short-uuid / username), so the
+        verbatim `remnawave_short_uuid` we already store is the reliable source.
+        Best-effort: returns None on any failure (→ global ban)."""
         if not remnawave_uuid:
             return None
-        try:
-            from app.services.remnawave_service import RemnaWaveService
+        from app.database.database import AsyncSessionLocal
 
-            service = RemnaWaveService()
-            if not service.is_configured:
-                return None
-            async with service.get_api_client() as api:
-                rw_user = await api.get_user_by_uuid(remnawave_uuid)
-                if rw_user and rw_user.short_uuid:
-                    return rw_user.short_uuid
+        try:
+            async with AsyncSessionLocal() as db:
+                row = await db.execute(
+                    select(Subscription.remnawave_short_uuid).where(
+                        Subscription.remnawave_uuid == remnawave_uuid,
+                        Subscription.remnawave_short_uuid.is_not(None),
+                    )
+                )
+                value = row.scalars().first()
+                return value or None
         except Exception as exc:
             logger.warning('Failed to resolve short_uuid for device block', error=str(exc)[:300])
         return None
