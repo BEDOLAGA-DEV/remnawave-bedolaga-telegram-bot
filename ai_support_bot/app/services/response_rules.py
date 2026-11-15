@@ -398,7 +398,8 @@ def paid_access_request(question: str) -> bool:
 
 
 def initial_greeting(answer: str, first_reply: bool) -> str:
-    visible = re.sub(r'<[^>]*>', '', answer).lstrip()
+    # A leading premium emoji is decoration: «🎧 Здравствуйте!» already greets.
+    visible = re.sub(r'^[^\w]+', '', re.sub(r'<[^>]*>', '', answer))
     if first_reply and not re.match(r'здравств|привет|добр(?:ый|ое|ой)\b|hello\b|hi\b', visible, re.IGNORECASE):
         return 'Здравствуйте!\n\n' + answer
     return answer

@@ -58,3 +58,11 @@ async def test_refused_premium_emoji_are_resent_as_plain(monkeypatch):
 
     assert await bot_mod._answer_safely(message, text)
     assert message.answer.await_args_list[1].args[0] == '🎧 Передаю обращение команде.'
+
+
+def test_greeting_after_a_lead_emoji_is_not_doubled():
+    from ai_support_bot.app.services.response_rules import initial_greeting
+
+    answer = decorate('Здравствуйте! Проверю.', lead='🎧')
+    assert initial_greeting(answer, True) == answer
+    assert initial_greeting(decorate('Проверю.', lead='🎧'), True).startswith('Здравствуйте!\n\n')
