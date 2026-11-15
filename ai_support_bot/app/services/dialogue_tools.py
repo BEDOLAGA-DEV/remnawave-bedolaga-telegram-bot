@@ -189,6 +189,10 @@ async def execute_support_tool(name: str, raw_arguments: str, telegram_id: int, 
             return {'error': 'Параметры не нужны.'}
         state['_store_help'] = True
         return {'instruction': APP_STORE_REGION_HELP}
+    if name in {'check_paid_access', 'check_subscription_renewal'} and state.get('_renewal_request'):
+        # A plain «продлить» must not open the payment-check flow and its sticky flags.
+        return {'error': 'Клиент просит продлить подписку, а не проверить оплату. Коротко ответь, '
+                         'что продлить можно по кнопке под ответом, в том числе заранее.'}
     if name in {'recover_wheel_rewards', 'check_paid_access', 'check_subscription_renewal'}:
         if name != 'recover_wheel_rewards' and state.get('_tariff_question'):
             return {'error': 'Это вопрос об условиях тарифа, а не о совершённой оплате. Ответь про цену, период и устройства по каталогу/скриншоту.'}

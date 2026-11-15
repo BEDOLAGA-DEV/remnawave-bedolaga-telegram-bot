@@ -509,6 +509,9 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
     if await _answer_safely(message, answer, result.get('buttons')) is False:
         logger.info('AI answer suppressed: operator took over', chat_id=message.chat.id)
         return
+    if result.get('buttons'):
+        logger.info('Answer buttons sent', telegram_id=telegram_id,
+                    buttons=[button['text'] for row in result['buttons'] for button in row])
 
     if (
         not result['escalate']

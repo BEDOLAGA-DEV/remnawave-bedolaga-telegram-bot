@@ -64,6 +64,7 @@ from ai_support_bot.app.services.service_identity import (
     official_service_reference,
     renewal_navigation_request,
     renewal_payment_request,
+    renewal_request,
     renewal_verification_answer,
     tariff_question,
 )
@@ -410,7 +411,9 @@ class SupportAgent:
         context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
         pricing_question = tariff_question(question, history)
-        if pricing_question:
+        # «Продлить» without a payment complaint is a new request: old payment flags must not answer it.
+        renewal_wish = renewal_request(question)
+        if pricing_question or renewal_wish:
             support_state = {'issue': 'other'}
         if source := official_service_reference(question):
             support_state['service_source'] = source
@@ -442,7 +445,9 @@ class SupportAgent:
         forced_reason = mandatory_handoff(question, history)
         if pricing_question:
             support_state['_tariff_question'] = True
-        if not forced_reason and not pricing_question and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
+        if renewal_wish:
+            support_state['_renewal_request'] = True
+        if not forced_reason and not pricing_question and not renewal_wish and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
             support_state['renewal_verification'] = True
             support_state['issue'] = 'payment_activation'
         if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
@@ -733,6 +738,8 @@ class SupportAgent:
             button_actions = {'apps': ['connect'], 'wheel': ['wheel']}.get(direct_kind) or (
                 answer_buttons.page_actions(answer_text) if direct_kind == 'navigation' else [])
         buttons = answer_buttons.build(button_actions, user_context)
+        if renewal_wish and not (serious or escalate):
+            buttons = answer_buttons.renew_buttons(user_context or await build_user_context(telegram_id))
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,
@@ -752,6 +759,7 @@ class SupportAgent:
         support_state.pop('_access_result', None)
         support_state.pop('_store_help', None)
         support_state.pop('_tariff_question', None)
+        support_state.pop('_renewal_request', None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
         support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []

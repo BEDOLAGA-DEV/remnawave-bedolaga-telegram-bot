@@ -70,6 +70,21 @@ def build(actions: list[str], user_context: str = '') -> list[list[dict]]:
     return rows
 
 
+_SUBSCRIPTION_LINE = re.compile(r'подписка №(\d+) \(id=(\d+)\), статус=[^,]*, триал=(да|нет), до ([\d.]+)')
+
+
+def renew_buttons(user_context: str) -> list[list[dict]]:
+    """Green buttons straight to the renewal page of each paid subscription; a trial-only customer gets «buy»."""
+    subscriptions = [(number, sub_id, end) for number, sub_id, trial, end in _SUBSCRIPTION_LINE.findall(user_context or '')
+                     if trial == 'нет']
+    if not subscriptions:
+        return build(['buy'])
+    if len(subscriptions) == 1:
+        return [[{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/{subscriptions[0][1]}/renew', 'style': 'success'}]]
+    return [[{'text': f'Продлить №{number} · до {end}', 'url': f'{SITE}/subscriptions/{sub_id}/renew', 'style': 'success'}]
+            for number, sub_id, end in subscriptions[:MAX_BUTTONS]]
+
+
 def page_actions(answer: str) -> list[str]:
     """Rule answers already name a cabinet page; offer it as a button."""
     for match in _SITE_LINK.finditer(answer or ''):

@@ -1599,3 +1599,26 @@ async def test_ambiguous_add_device_checks_current_limit_and_tariff_included_pla
     assert 'итог 0 ₽' in result['answer']
     assert 'занятых мест' not in result['answer']
     assert not result['escalate']
+
+
+@pytest.mark.asyncio
+async def test_plain_renewal_wish_clears_payment_flags_and_gets_renew_buttons(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    context = ('  • подписка №1 (id=57923), статус=active, триал=нет, до 14.12.2026 (осталось 29 дн.), трафик=∞')
+
+    async def real_context(telegram_id, email=None):
+        return context
+
+    monkeypatch.setattr(agent_mod, 'build_user_context', real_context)
+    captured['reply'] = 'Продлить можно заранее — по кнопке ниже.'
+    async with Session() as db:
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        conversation.support_state = {'issue': 'payment_activation', 'renewal_verification': True}
+        await db.commit()
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Продлить подписку')
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+
+    assert result['answer'].endswith('Продлить можно заранее — по кнопке ниже.')
+    assert result['buttons'] == [[{'text': 'Продлить подписку', 'url': 'https://web.slig.app/subscriptions/57923/renew',
+                                   'style': 'success'}]]
+    assert conversation.support_state == {'issue': 'other'}

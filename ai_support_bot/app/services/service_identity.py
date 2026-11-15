@@ -65,6 +65,17 @@ def tariff_question(question: str, history: list) -> bool:
     return False
 
 
+def renewal_request(question: str) -> bool:
+    """A plain wish to renew: no claim that a payment was made or that the renewal failed.
+
+    Only the wish forms count; «продлится», «продлилась», «продлили» ask about a result, not for a renewal.
+    """
+    return bool(re.search(r'\bпродл(?:ить|ите|ю|им|ение|ения|ении)\b', question, re.IGNORECASE)) and not re.search(
+        r'оплатил|оплачен|заплат|проплат|списал|деньги|чек|выписк|не\s+продл|не\s+добав|не\s+зачисл|автопродл',
+        question, re.IGNORECASE,
+    )
+
+
 def renewal_navigation_request(question: str) -> bool:
     return bool(re.search(r'\bкак\s+(?:мне\s+|теперь\s+)?(?:самостоятельно\s+)?продл', question, re.IGNORECASE))
 
