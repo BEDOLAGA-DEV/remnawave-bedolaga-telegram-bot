@@ -24,7 +24,7 @@ async def get_remnawave_stats(telegram_id: int | None, remnawave_uuid: str | Non
 
     base_url = settings.REMNAWAVE_API_URL.rstrip('/')
     headers = {'Authorization': f'Bearer {settings.REMNAWAVE_API_TOKEN}'}
-    timeout = aiohttp.ClientTimeout(total=15)
+    timeout = aiohttp.ClientTimeout(total=5)
 
     endpoints: list[str] = []
     if telegram_id:

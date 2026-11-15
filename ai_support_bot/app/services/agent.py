@@ -37,6 +37,7 @@ from ai_support_bot.app.services.response_rules import (
     cannot_provide_payment_details,
     compact_knowledge,
     deduplicate_answer,
+    drop_scope_disclaimer,
     generated_program,
     handoff_answer,
     happ_recovery_step,
@@ -46,6 +47,8 @@ from ai_support_bot.app.services.response_rules import (
     keeps_account_scope,
     mandatory_handoff,
     manual_review_followup,
+    money_dispute_topic,
+    neutral_self_reference,
     paid_access_request,
     payment_next_step,
     repeated_answer,
@@ -59,6 +62,7 @@ from ai_support_bot.app.services.response_rules import (
     unsupported_price,
     wheel_reward_request,
 )
+from ai_support_bot.app.services import server_status
 from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
 from ai_support_bot.app.services.service_identity import (
     official_service_reference,
@@ -81,8 +85,10 @@ _ESCALATION_MARKER = ESCALATION_MARKER
 # Disputes, refunds, cancellations and payment checks keep a plain tone: no emoji at all.
 _SERIOUS_REASONS = {
     'unrecognized_charge', 'subscription_cancellation', 'subscription_restricted', 'payment_review',
-    'payment_dispute', 'refund', 'partnership',
+    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff',
 }
+# Never under a cancellation, refund or disputed charge.
+_PAYMENT_BUTTONS = {'renew', 'buy', 'topup'}
 _LEAD_EMOJI = {'apps': '🚀', 'recovery': '🛡', 'navigation': '🌐', 'wheel': '🎁'}
 _PAYMENT_TOOLS = {'check_paid_access', 'check_subscription_renewal'}
 _PAYMENT_CLAIM = re.compile(
@@ -285,6 +291,7 @@ class SupportAgent:
         summary: str | None,
         navigation: str = '',
         catalog: str = '',
+        status: str = '',
     ) -> str:
         configured_prompt = settings_store.get('SYSTEM_PROMPT')
         policy_header = 'Актуальные правила SligVPN (приоритет над устаревшими примерами и настройками промпта):'
@@ -308,6 +315,9 @@ class SupportAgent:
 
         if catalog:
             blocks.append(catalog)
+
+        if status:
+            blocks.append(status)
 
         if knowledge:
             examples = [
@@ -421,8 +431,10 @@ class SupportAgent:
         context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
         pricing_question = tariff_question(question, history)
+        # Refunds, cancellations and disputed charges: plain text, no renew or buy buttons.
+        money_case = money_dispute_topic(question)
         # «Продлить» without a payment complaint is a new request: old payment flags must not answer it.
-        renewal_wish = renewal_request(question)
+        renewal_wish = renewal_request(question) and not money_case
         if pricing_question or renewal_wish:
             support_state = {'issue': 'other'}
         if source := official_service_reference(question):
@@ -571,13 +583,18 @@ class SupportAgent:
 
         navigation_block = ''
         catalog_block = ''
+        status_block = ''
         if not smalltalk and not forced_reason and not direct_answer:
             navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
             if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци|устройств|девайс', question, re.IGNORECASE):
                 catalog_block = await self._build_catalog_block(telegram_id)
+            # Countries and outages come from live monitoring, not from old tickets.
+            recent_user = ' '.join(item.content or '' for item in history[-2:] if item.role == 'user')
+            if server_status.status_relevant(question, recent_user):
+                status_block = await server_status.build_status_block()
 
         system_prompt = self._build_system_prompt(
-            knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block
+            knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block, status=status_block
         )
         if smalltalk:
             system_prompt = (
@@ -699,6 +716,8 @@ class SupportAgent:
             if escalate:
                 forced_reason = 'payment_review'
         answer_text = deduplicate_answer(strip_escalation_marker(answer_text))
+        if model_used != 'rules':
+            answer_text = neutral_self_reference(drop_scope_disclaimer(answer_text, question))
         escalation_reason = forced_reason
         if not escalate and subscription_restricted(answer_text):
             escalation_reason = 'subscription_restricted'
@@ -737,8 +756,9 @@ class SupportAgent:
         if not re.sub(r'<[^>]*>', '', answer_text).strip():
             answer_text = NOTICE
             escalate = True
+        # The model may hand a refund or a disputed charge over by itself, without a rule reason: still a plain answer.
         serious = bool({escalation_reason, forced_reason} & _SERIOUS_REASONS or support_state.get('renewal_verification')
-                       or support_state.get('issue') in {'payment_missing', 'payment_activation'})
+                       or support_state.get('issue') in {'payment_missing', 'payment_activation'} or (escalate and money_case))
         lead = '🎧' if escalate else _LEAD_EMOJI.get(direct_kind) if model_used == 'rules' else None
         answer_text = decorate(answer_text, lead=lead, plain=serious)
         if serious or escalate:
@@ -746,6 +766,8 @@ class SupportAgent:
         elif model_used == 'rules':
             button_actions = {'apps': ['connect'], 'wheel': ['wheel']}.get(direct_kind) or (
                 answer_buttons.page_actions(answer_text) if direct_kind == 'navigation' else [])
+        if money_case:
+            button_actions = [action for action in button_actions if action not in _PAYMENT_BUTTONS]
         buttons = answer_buttons.build(button_actions, user_context)
         if renewal_wish and not (serious or escalate):
             buttons = answer_buttons.renew_buttons(user_context or await build_user_context(telegram_id))
@@ -754,15 +776,18 @@ class SupportAgent:
                 answer_text = decorate(answer_buttons.renew_answer(buttons), lead='⏳')
         # The model often skips buttons for prices and devices; the next step is clear, so the code adds it.
         device_action = answer_buttons.device_action(question)
-        price_like = pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE))
+        price_like = (pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE))) and not money_case
         if not buttons and not (serious or escalate) and (price_like or device_action):
             context = user_context or await build_user_context(telegram_id)
             if price_like:
                 buttons = answer_buttons.renew_buttons(context) or answer_buttons.build(['buy'])
             else:
                 buttons = answer_buttons.build([device_action], context)
+        # The answer sends the customer to «Подключить устройство»: the button saves the search.
+        if not buttons and not (serious or escalate) and answer_buttons.mentions_connect(answer_text):
+            buttons = answer_buttons.build(['connect'], user_context)
         # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
-        if not (serious or escalate or renewal_wish) and (
+        if not (serious or escalate or renewal_wish or money_case) and (
             starts_technical_issue(question) or re.search(r'не\s+работа|не\s+подключ', question, re.IGNORECASE)
         ):
             context = user_context or await build_user_context(telegram_id)

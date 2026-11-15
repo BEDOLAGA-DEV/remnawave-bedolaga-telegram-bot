@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     REMNAWAVE_API_URL: str = ''
     REMNAWAVE_API_TOKEN: str = ''
 
+    # Живое состояние серверов для промпта (services/server_status.py)
+    XRAY_CHECKER_URL: str = ''  # xray-checker, берётся только GET /metrics
+    XRAY_CHECKER_USERNAME: str = ''
+    XRAY_CHECKER_PASSWORD: str = ''
+    SERVER_STATUS_ENABLED: bool = True
+    SERVER_STATUS_TTL: int = 120  # кеш состояния в секундах
+    SERVER_STATUS_MAX_STALE: int = 1800  # сколько секунд можно отдавать последние удачные данные при сбое
+
     ADMIN_HOST: str = '0.0.0.0'
     ADMIN_PORT: int = 8090
     ADMIN_USERNAME: str = ''

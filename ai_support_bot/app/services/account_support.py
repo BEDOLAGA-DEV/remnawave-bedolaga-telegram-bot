@@ -1,5 +1,5 @@
 """Read personal support evidence using the authenticated Telegram identity only."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlsplit
 
@@ -21,6 +21,18 @@ def _date(value):
     if not isinstance(value, datetime):
         return None
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+# Moscow has kept UTC+3 all year since 2014; a fixed offset needs no tz database in the container.
+_MOSCOW = timezone(timedelta(hours=3))
+
+
+def moscow_time(value) -> str:
+    """«2026-11-14 19:17:13.570707+00:00» → «14.11.2026 22:17 МСК»; text that is not a timestamp stays as it is."""
+    moment = _date(value)
+    if moment is None:
+        return str(value)
+    return moment.astimezone(_MOSCOW).strftime('%d.%m.%Y %H:%M') + ' МСК'
 
 
 async def read_account_support(telegram_id: int, kind: str, email: str | None = None) -> dict:
@@ -69,8 +81,8 @@ async def read_account_support(telegram_id: int, kind: str, email: str | None = 
                     row['valid_until'] is None or (end is not None and end >= now)
                 )
                 rewards.append({
-                    'code': row['code'], 'won_at': str(row['won_at']),
-                    'valid_until': str(row['valid_until']) if row['valid_until'] else None,
+                    'code': row['code'], 'won_at': moscow_time(row['won_at']),
+                    'valid_until': moscow_time(row['valid_until']) if row['valid_until'] else None,
                     'usable': usable,
                 })
             return {'status': 'ok', 'rewards': rewards, 'incomplete_rewards': incomplete}
@@ -97,8 +109,8 @@ def wheel_reward_answer(result: dict) -> tuple[str, bool]:
     lines = ['Ваши последние промокоды, выигранные в колесе:']
     for reward in rewards:
         status = 'доступен' if reward['usable'] else 'сейчас недоступен для активации'
-        expiry = f", срок до {escape(reward['valid_until'])}" if reward['valid_until'] else ''
-        lines.append(f"• <code>{escape(reward['code'])}</code> — выигран {escape(reward['won_at'])}; {status}{expiry}.")
+        expiry = f", срок до {escape(moscow_time(reward['valid_until']))}" if reward['valid_until'] else ''
+        lines.append(f"• <code>{escape(reward['code'])}</code> — выигран {escape(moscow_time(reward['won_at']))}; {status}{expiry}.")
     if result.get('incomplete_rewards') or not any(reward['usable'] for reward in rewards):
         lines.append('Передаю обращение команде для проверки. Не выпускаю и не заменяю промокоды самостоятельно.')
         return '\n'.join(lines), True

@@ -866,7 +866,8 @@ async def test_repeated_diagnostics_become_handoff_with_attachment(flow, with_ph
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, '' if with_photo else 'не работает', **options)
     assert result['escalate']
-    assert result['escalation_reason'] == 'repeated_diagnostics'
+    # A text «не работает» after the server/refresh template is handed over before the model is asked again.
+    assert result['escalation_reason'] == ('repeated_diagnostics' if with_photo else 'diagnostics_failed')
     assert result['answer'] == decorate(agent_mod.NOTICE, lead='🎧')
     if with_photo:
         assert result['support_photo'] == 'repeat-photo'
@@ -991,7 +992,9 @@ async def test_happ_extra_diagnostics_are_offered_once_then_handed_off(flow):
 @pytest.mark.asyncio
 async def test_unknown_client_is_asked_before_happ_specific_recovery(flow):
     captured, agent_mod, Session = flow
-    captured['reply'] = 'Обновите список серверов и перезапустите устройство.'
+    # One step only: after the full «сервер / обновить подписку» template «не помогло» goes to the team instead
+    # (test_replay_fixes2.py).
+    captured['reply'] = 'Перезапустите устройство.'
     async with Session() as db:
         await agent_mod.support_agent.generate_answer(db, 4242, 'VPN не работает')
     async with Session() as db:
@@ -1685,3 +1688,21 @@ async def test_ended_subscriptions_and_vpn_not_working_get_renewal_instead_of_st
     assert 'Перезапустите' not in result['answer']
     assert [row[0]['url'] for row in result['buttons']] == [
         'https://web.slig.app/subscriptions/101/renew', 'https://web.slig.app/subscriptions/102/renew']
+
+
+@pytest.mark.asyncio
+async def test_live_server_status_reaches_the_prompt_only_for_server_questions(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    block = '<server_status>\n• Германия: Германия — работает\n</server_status>'
+    status = AsyncMock(return_value=block)
+    monkeypatch.setattr(agent_mod.server_status, 'build_status_block', status)
+    captured['reply'] = 'Японии сейчас нет. Есть Германия.'
+
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Есть возможность добавить Японию?')
+    assert block in captured['prompts'][-1]
+
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4243, 'Сколько стоит подписка на месяц?')
+    assert block not in captured['prompts'][-1]
+    assert status.await_count == 1

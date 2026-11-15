@@ -1,0 +1,44 @@
+# HELP xray_proxy_latency_ms Latency of proxy connection in milliseconds, 0 if failed
+# TYPE xray_proxy_latency_ms gauge
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇺🇸 США 2 ",protocol="vless",stable_id="bbc455d9acc675f0",sub_name="🦎 SligVPN │ 26410 Дней"} 638
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇸🇪 Швеция ⚡",protocol="vless",stable_id="ea560a80bdfb55ac",sub_name="🦎 SligVPN │ 26410 Дней"} 254
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇱🇻 Латвия",protocol="vless",stable_id="3d10ecb27522b83c",sub_name="🦎 SligVPN │ 26410 Дней"} 252
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇳🇱 Нидерланды",protocol="vless",stable_id="4383a4276e5e511e",sub_name="🦎 SligVPN │ 26410 Дней"} 250
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇩🇪 Германия FFM ⚡",protocol="vless",stable_id="18146735ae81d152",sub_name="🦎 SligVPN │ 26410 Дней"} 107
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇫🇮 Hysteria ",protocol="hysteria",stable_id="efe44944c39022dd",sub_name="🦎 SligVPN │ 26410 Дней"} 248
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇫🇮 Финляндия gRPC",protocol="vless",stable_id="c2cf0ab91991f6b1",sub_name="🦎 SligVPN │ 26410 Дней"} 311
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇫🇮 Финляндия ⚡",protocol="vless",stable_id="9bc696a602a6f158",sub_name="🦎 SligVPN │ 26410 Дней"} 257
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇫🇷 Франция",protocol="vless",stable_id="572b049edba461ee",sub_name="🦎 SligVPN │ 26410 Дней"} 141
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇩🇪 Германия ⚡",protocol="vless",stable_id="25d9f9bfeb26dfa5",sub_name="🦎 SligVPN │ 26410 Дней"} 318
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇫🇮 Hysteria ⚡",protocol="hysteria",stable_id="03d8a521b5be1d36",sub_name="🦎 SligVPN │ 26410 Дней"} 427
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇪🇺 Авто выбор 👈",protocol="shadowsocks",stable_id="6bc8b7f4d04f409a",sub_name="🦎 SligVPN │ 26410 Дней"} 0
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇷🇺 Москва ",protocol="vless",stable_id="eacddb45aedf5e77",sub_name="🦎 SligVPN │ 26410 Дней"} 422
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇪🇺 Белые списки #2 🏳️",protocol="vless",stable_id="73f3476783e5f522",sub_name="🦎 SligVPN │ 26410 Дней"} 511
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇪🇪 Эстония ",protocol="vless",stable_id="b8c6247abfe8ba25",sub_name="🦎 SligVPN │ 26410 Дней"} 272
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇷🇺 Россия · Банки",protocol="vless",stable_id="f3bc4d3e4dd65423",sub_name="🦎 SligVPN │ 26410 Дней"} 382
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇪🇺 Белые списки 🏳️",protocol="vless",stable_id="cd348bbef448a3d4",sub_name="🦎 SligVPN │ 26410 Дней"} 622
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇷🇺 Россия · YouTube",protocol="vless",stable_id="b0cd6f0d8e0de137",sub_name="🦎 SligVPN │ 26410 Дней"} 436
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇺🇸 USA",protocol="vless",stable_id="dfe5cd9cdea6dbb5",sub_name="🦎 SligVPN │ 26410 Дней"} 8372
+xray_proxy_latency_ms{address="203.0.113.10:443",group_name="",name="🇪🇺 Авто выбор Белые списки 👈",protocol="shadowsocks",stable_id="fad63382ae62c598",sub_name="🦎 SligVPN │ 26410 Дней"} 0
+# HELP xray_proxy_status Status of proxy connection (1: success, 0: failure)
+# TYPE xray_proxy_status gauge
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇺🇸 США 2 ",protocol="vless",stable_id="bbc455d9acc675f0",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇸🇪 Швеция ⚡",protocol="vless",stable_id="ea560a80bdfb55ac",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇱🇻 Латвия",protocol="vless",stable_id="3d10ecb27522b83c",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇳🇱 Нидерланды",protocol="vless",stable_id="4383a4276e5e511e",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇩🇪 Германия FFM ⚡",protocol="vless",stable_id="18146735ae81d152",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇫🇮 Hysteria ",protocol="hysteria",stable_id="efe44944c39022dd",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇫🇮 Финляндия gRPC",protocol="vless",stable_id="c2cf0ab91991f6b1",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇫🇮 Финляндия ⚡",protocol="vless",stable_id="9bc696a602a6f158",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇫🇷 Франция",protocol="vless",stable_id="572b049edba461ee",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇩🇪 Германия ⚡",protocol="vless",stable_id="25d9f9bfeb26dfa5",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇫🇮 Hysteria ⚡",protocol="hysteria",stable_id="03d8a521b5be1d36",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇪🇺 Авто выбор 👈",protocol="shadowsocks",stable_id="6bc8b7f4d04f409a",sub_name="🦎 SligVPN │ 26410 Дней"} 0
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇷🇺 Москва ",protocol="vless",stable_id="eacddb45aedf5e77",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇪🇺 Белые списки #2 🏳️",protocol="vless",stable_id="73f3476783e5f522",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇪🇪 Эстония ",protocol="vless",stable_id="b8c6247abfe8ba25",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇷🇺 Россия · Банки",protocol="vless",stable_id="f3bc4d3e4dd65423",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇪🇺 Белые списки 🏳️",protocol="vless",stable_id="cd348bbef448a3d4",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇷🇺 Россия · YouTube",protocol="vless",stable_id="b0cd6f0d8e0de137",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇺🇸 USA",protocol="vless",stable_id="dfe5cd9cdea6dbb5",sub_name="🦎 SligVPN │ 26410 Дней"} 1
+xray_proxy_status{address="203.0.113.10:443",group_name="",name="🇪🇺 Авто выбор Белые списки 👈",protocol="shadowsocks",stable_id="fad63382ae62c598",sub_name="🦎 SligVPN │ 26410 Дней"} 0

@@ -186,18 +186,126 @@ def smalltalk_answer(question: str) -> str | None:
     return None
 
 
+_CHARGE = r'спис\w*|снима\w*|снял\w*|снят\w*'
+# «Вернуть», «верните», «вернутся», but not «верно».
+_RETURN = r'верн(?:и|ите|уть|ут|утся|[её]т|[её]те|[её]тся|ул\w*)\b'
+_REFUND = re.compile(
+    r'(?:хочу|прошу|можно|нужно|могу|можете)\s+(?:ли\s+)?(?:как[\s-]?(?:то|нибудь)\s+)?(?:сделать\s+|оформить\s+|получить\s+)?(?:возврат|вернуть деньги)'
+    r'|верните\s+(?:мне\s+)?деньги'
+    r'|' + _RETURN + r'\s+(?:[\w-]+\s+){0,4}?(?:деньг|денег|денежн|средств|оплат[уы]\b|плат[её]ж)'
+    r'|\bвоз[а-яё]{0,3}в?рат[а-яё]*\s+(?:\w+\s+)?(?:денег|средств|оплат|част|неиспольз|за\s+подписк)'
+    r'|(?:есть|возможен|возможно|будет|предусмотрен\w*)\s+ли\s+(?:\w+\s+)?возврат|возврат\w*\s+(?:возмож|предусмотр)'
+)
+_PAID = r'оплатил\w*|заплатил\w*|списал\w*|списан\w*|списыва\w*|снял\w*|сняли|оплат[аыу]\b|плат[её]ж\w*'
+_DOUBLE_PAYMENT = re.compile(
+    r'(?:' + _PAID + r')\s+(?:[\w-]+\s+){0,3}?(?:дважды|два\s+раза|2\s+раза)\b'
+    r'|(?:дважды|два\s+раза|2\s+раза)\s+(?:[\w-]+\s+){0,2}?(?:' + _PAID + r')|двойн\w*\s+(?:оплат|списан|плат[её]ж)'
+)
+_WRONG_TARIFF = re.compile(
+    r'(?:случайно|по\s+ошибке|ошибочно|нечаянно)\s+(?:[\w-]+\s+){0,2}?(?:купил|оплатил|оформил|выбрал|взял|продлил|подключил|заплатил)'
+    r'|(?:купил|оплатил|оформил|взял|продлил)\w*\s+не\s+т(?:от|у|ой|е)\b|не\s+т(?:от|у)\s+(?:тариф|подписк|период)'
+)
+_ACCOUNT = r'аккаунт|\bакк\b|\bтг\b|telegram|телеграм|профил'
+
+
+def account_transfer_request(question: str) -> bool:
+    """A hacked or lost account, or a wish to move the subscription to another account: only the team can do it.
+
+    Moving the subscription to a new phone is a device question and stays self-service.
+    """
+    text = question.casefold()
+    hacked = re.search(r'взломал\w*|взломан\w*|(?:после|из-за)\s+взлом\w*|угнал\w*', text) and re.search(_ACCOUNT, text)
+    transfer = re.search(r'перен(?:ести|есите|ес[её]те|ос\w*|[её]с\w*)\s+(?:[\w-]+\s+){0,3}?(?:подписк|впн|vpn|тариф|баланс|срок|дн[иея]\b)', text) and re.search(
+        _ACCOUNT + r'|@\w+|айди|\bid\b|почт|email', text)
+    lost = re.search(r'(?:потерял\w*|утерял\w*|нет\s+доступа\s+к)\s+(?:доступ\w*\s+к\s+)?(?:сво\w+\s+|стар\w+\s+)?(?:тг|telegram|телеграм|аккаунт)'
+                     r'|(?:тг|telegram|телеграм|аккаунт\w*)\s+(?:[\w-]+\s+)?(?:потерял|утерял)', text)
+    return bool(hacked or transfer or lost)
+
+
+def money_handoff(question: str) -> str | None:
+    """Double payment, a wrong tariff or an account transfer always go to the team with their own reason."""
+    text = question.casefold()
+    if _DOUBLE_PAYMENT.search(text):
+        return 'payment_dispute'
+    if _WRONG_TARIFF.search(text):
+        return 'wrong_tariff'
+    return None
+
+
+def money_dispute_topic(question: str) -> bool:
+    """Refunds, cancellations, disputed charges and account transfers: no emoji, no buttons and never «Продлить».
+
+    Wider than the forced handoff: «как отключить автопродление?» is answered by the model, but still gets no renew button.
+    """
+    text = question.casefold()
+    return bool(
+        _REFUND.search(text) or money_handoff(question) or cancellation_request(question) or account_transfer_request(question)
+        or re.search(r'возврат|отмен\w*|отпис\w*|(?:отключ|выключ|убр)\w*\s+(?:[\w-]+\s+)?(?:авто\w*|подписк|списан)|спорн\w*|чарджб'
+                     r'|спис(?:ал|ан|ыв)\w*|(?:деньг|денег|средств|руб|₽).{0,40}(?:снял|сняли|снят|снима)'
+                     r'|(?:снял\w*|сняли|снят\w*|снима\w*).{0,40}(?:деньг|денег|средств|руб|₽|карт)', text)
+    )
+
+
+_TRIED = re.compile(
+    r'уже\s+(?:вс[её]\s+)?(?:пробовал\w*|попробовал\w*|перепробовал\w*|делал\w*|сделал\w*)|перепробовал\w*'
+    r'|пробовал\w*\s+(?:через\s+|в\s+|на\s+)?(?:разн\w*|все|вс[её]|други\w*|несколько)'
+    r'|не\s+помог\w*|не\s+помогает|ничего\s+не\s+(?:помог\w*|измен\w*|поменял\w*|меня\w*)|вс[её]\s+равно\s+не\b'
+)
+_LONG_OUTAGE = re.compile(
+    r'(?<!на\s)(?<!в\s)(?:уже\s+|больше\s+|более\s+|около\s+|почти\s+|целую\s+|всю\s+)?недел[юиья]\b'
+    r'|(?<!на\s)(?:\d+|два|три|четыре|пять|несколько|пару|пара)(?:-?(?:х|й|ий|ой|ый|ти|е))?\s+(?:дн(?:я|ей)|день|сут(?:ки|ок))\b(?!\s+назад)'
+    r'|(?:второй|третий|четв[её]ртый|пятый)\s+день|(?:целый|весь)\s+день|(?:уже|больше|более|почти|целый)\s+месяц\w*'
+    r'|давно\s+(?:уже\s+)?не\s+(?:работа|подключ|грузит|открыва)'
+)
+_TECH_FAILURE = re.compile(
+    r'не\s+работа\w*|не\s+подключ\w*|не\s+грузит|не\s+загружа\w*|не\s+открыва\w*|не\s+заработал\w*|недоступн\w*'
+    r'|(?:плохо|ужасно)\s+работа\w*|нет\s+интернет\w*|\bn[\\/]a\b|н/д'
+)
+_BASIC_STEPS = (
+    r'(?:смен|друг|выбер|выбра|переключ)\w*[^.\n]{0,30}сервер|сервер\w*[^.\n]{0,20}(?:смен|друг)',
+    r'обнов\w*[^.\n]{0,30}(?:подписк|список|сервер)',
+    r'перезапуст|перезагруз',
+    r'wi.?fi|мобильн\w*\s+(?:сет|интернет)|сотов',
+)
+
+
+def basic_steps_given(answer: str) -> bool:
+    """The usual «смените сервер / обновите подписку / перезапустите» template."""
+    text = (answer or '').casefold()
+    return sum(bool(re.search(pattern, text)) for pattern in _BASIC_STEPS) >= 2
+
+
+def diagnostics_exhausted(question: str, history: list) -> bool:
+    """«Уже пробовал», «неделю не работает» or a new «не работает» after the template: a new round of the same steps won't help."""
+    text = question.casefold()
+    # Payments have their own checks; a client missing from the App Store gets the region instructions.
+    if re.search(r'плат[её]ж|оплат|попол|деньг|списал|чек\b|app\s*store|апп?\s*стор|аппстор|эпп\s*стор|google\s*play|плей\s*маркет', text):
+        return False
+    if _TECH_FAILURE.search(text) and (_TRIED.search(text) or _LONG_OUTAGE.search(text)):
+        return True
+    if _TRIED.search(text) and _LONG_OUTAGE.search(text):
+        return True
+    previous = next((getattr(item, 'content', '') or '' for item in reversed(history) if item.role == 'assistant'), '')
+    return basic_steps_given(previous) and bool(_TECH_FAILURE.search(text) or _TRIED.search(text) or re.search(r'та\s+же\s+ошибк|то\s+же\s+самое', text))
+
+
 def mandatory_handoff(question: str, history: list) -> str | None:
     text = question.casefold()
     recent_user = ' '.join(getattr(item, 'content', '') or '' for item in history[-6:] if item.role == 'user')
     payment_context = text + ' ' + recent_user.casefold()
-    charge_pattern = r'спис\w*|снима\w*|снял\w*|снят\w*'
-    denial_pattern = r'не\s+(?:подписывал\w*|подключал\w*|оформлял\w*|заказывал\w*|давал\w* согласия)|без\s+(?:моего\s+)?согласия|незнаком\w* списан|не\s+мо[яё]\s+подписк'
+    charge_pattern = _CHARGE
+    denial_pattern = (
+        r'не\s+(?:подписывал\w*|подключал\w*|оформлял\w*|заказывал\w*|покупал\w*|давал\w* согласия)|без\s+(?:моего\s+)?согласия'
+        r'|незнаком\w* списан|не\s+мо[яё]\s+подписк|(?:подписк\w*|услуг\w*)\s+(?:у\s+меня\s+)?(?:никогда\s+)?не\s+было'
+    )
     if (
         re.search(charge_pattern, payment_context)
         and re.search(denial_pattern, payment_context)
         and (re.search(charge_pattern, text) or re.search(denial_pattern, text) or manual_review_followup(question))
     ):
         return 'unrecognized_charge'
+    if reason := money_handoff(question):
+        return reason
     if cancellation_request(question) or (manual_review_followup(question) and cancellation_request(recent_user)):
         return 'subscription_cancellation'
     if subscription_restricted(question):
@@ -211,8 +319,10 @@ def mandatory_handoff(question: str, history: list) -> str | None:
         return 'human'
     if re.search(r'передайте\s+(?:это\s+)?обращение|передайте\s+.*команде', text):
         return 'human'
-    if re.search(r'(?:хочу|прошу|можно|нужно)\s+(?:сделать\s+)?(?:возврат|вернуть деньги)|верните\s+(?:мне\s+)?деньги|\bвоз[а-яё]{0,3}в?рат[а-яё]*\s+(?:денег|средств|оплат)', text) or re.fullmatch(r'\s*воз[а-яё]{0,3}в?рат[а-яё]*[.!?\s]*', text):
+    if _REFUND.search(text) or re.fullmatch(r'\s*воз[а-яё]{0,3}в?рат[а-яё]*[.!?\s]*', text):
         return 'refund'
+    if account_transfer_request(question):
+        return 'account_transfer'
     if re.search(r'сотрудничеств|предложени\w*\s+(?:о\s+)?реклам', text) and not re.search(r'условия реферальн|как.*реферальн', text):
         return 'partnership'
     if re.search(r'списал\w*.*(?:продлен|продлён|продление)', text) and re.search(r'(?:срок|подписк).*не (?:измен|продл)', text):
@@ -225,15 +335,33 @@ def mandatory_handoff(question: str, history: list) -> str | None:
     ))
     if technical and failed and (actions >= 2 or re.search(r'вс[её]\s+(?:это\s+)?(?:уже\s+)?(?:пробовал|сделал)', text)):
         return 'diagnostics_failed'
+    if diagnostics_exhausted(question, history):
+        return 'diagnostics_failed'
     return None
+
+
+def cancellation_blocked(text: str) -> bool:
+    """«Не отменяется подписка», «не могу отменить, а деньги списывают»; a stuck autopay toggle alone stays self-service."""
+    text = text.casefold()
+    if not re.search(r'не\s+отмен\w*ся|не\s+отключа\w*ся|не\s+(?:получается|получилось|удаётся|удается|удалось|могу|смог\w*|выходит)\s+(?:[\w-]+\s+)?(?:отменить|отключить|отписаться|отказаться)', text):
+        return False
+    subscription = re.search(r'подписк|услуг', text) and not re.search(r'автопл|автопрод|авто\s*списан', text)
+    return bool(subscription or re.search(_CHARGE + r'|деньг', text))
 
 
 def cancellation_request(question: str) -> bool:
     text = question.casefold()
+    if cancellation_blocked(text):
+        return True
     if re.search(r'\bне\s+(?:хочу\s+)?(?:отмен|отключ|отпис)', text) or re.match(r'^\s*как\b', text):
         return False
     action = re.search(r'\b(?:отмените|отключите|уберите|отпишите|прекратите)\b|(?:хочу|прошу|можете|пожалуйста)\s+(?:мне\s+)?(?:отменить|отключить|отписать|прекратить)', text)
-    return bool(action and re.search(r'подписк|авто\w*плат|авто\w*продл|списан|списыва|снимают|отпишите\s+меня', text))
+    # «Есть ли возможность отменить подписку?» and «Отмена вашей услуги» ask for a cancellation, not for the autopay toggle.
+    possible = re.search(r'(?:можно|возможно|есть\s+(?:ли\s+)?возможность|могу|получится)\s+(?:ли\s+)?(?:как[\s-]?(?:то|нибудь)\s+)?(?:мне\s+)?'
+                         r'(?:отменить|отказаться\s+от)\s+(?:[\w-]+\s+)?(?:подписк|услуг|тариф)', text)
+    noun = re.match(r'^\W*отмен[аеуы]\s+(?:[\w-]+\s+)?(?:подписк|услуг)', text)
+    unused = re.search(_CHARGE, text) and re.search(r'не\s+пользу(?:юсь|емся)', text)
+    return bool((action and re.search(r'подписк|авто\w*плат|авто\w*продл|списан|списыва|снимают|отпишите\s+меня', text)) or possible or noun or unused)
 
 
 def manual_review_followup(question: str) -> bool:
@@ -395,6 +523,116 @@ def paid_access_request(question: str) -> bool:
     access = bool(re.search(r'включ|активир|доступ|не работ|не подключ|не продл|ист[её]к|не обнов|0\s*дн|нет.*подпис', text))
     installation = bool(re.search(r'установ|скач|app\s*store|апп.?стор', text))
     return paid and access and not installation and not is_topup_without_renewal(question)
+
+
+_ON_TOPIC = re.compile(
+    r'vpn|впн|подписк|сервер|стран[аеуы]?\b|страны|локаци|оплат|тариф|устройств|приложени|подключ|прокси|proxy|сайт|сервис'
+    r'|не\s+откр|не\s+работа|не\s+грузит|ютуб|youtube|telegram|телеграм|\bтг\b|инстаграм|instagram'
+    r'|япони|казахстан|сша|америк|герман|нидерланд|голланд|финлянд|турци|польш|франц|англи|британ|эстони|латви|швеци|итали|испани|канад|кита|коре[яи]|грузи|армени|серби|оаэ|дубай',
+    re.IGNORECASE,
+)
+_SCOPE_DISCLAIMER = re.compile(
+    r'[ \t]*Я\s+помогаю\s+(?:только\s+)?(?:с|по)\s+(?:вопросам\s+)?SligVPN\b[^.!?\n]*[.!?]*'
+    r'(?:[ \t]*\n?[ \t]*(?:Напишите|Задайте)[^.!?\n]{0,60}вопрос[^.!?\n]{0,60}[.!?]*)?',
+    re.IGNORECASE,
+)
+_GREETING_ONLY = re.compile(r'^\W*(?:здравствуйте|привет|добр(?:ый|ое|ой)\s+\w+)?\W*$', re.IGNORECASE)
+
+
+def drop_scope_disclaimer(answer: str, question: str) -> str:
+    """The model writes «Я помогаю только с SligVPN» to on-topic questions too («добавьте Японию»): drop it there."""
+    if not _ON_TOPIC.search(question or '') or not _SCOPE_DISCLAIMER.search(answer or ''):
+        return answer
+    stripped = _SCOPE_DISCLAIMER.sub('', answer)
+    stripped = re.sub(r'[ \t]+\n', '\n', stripped)
+    stripped = re.sub(r'\n{3,}', '\n\n', stripped).strip()
+    if _GREETING_ONLY.match(re.sub(r'<[^>]*>', '', stripped)):
+        return answer
+    # «Здравствуйте.» that lost the rest of its line keeps its own paragraph.
+    return re.sub(r'^((?:здравствуйте|привет)[.!])[ \t]+(?=\S)', r'\1\n\n', stripped, flags=re.IGNORECASE)
+
+
+# Sentence start: text or line start, or after .!? — with an optional list marker, <b>/<i> and a leading emoji.
+_START = r'((?:^|(?<=\n)|(?<=[.!?…])[ \t]+)[ \t]*(?:[-•*][ \t]+|\d+[.)][ \t]+)?(?:<[bi]>)?(?:[^\w\s<>.,!?]{1,3}[ \t]*)?)'
+_GENITIVE = {
+    'доступ': 'доступа', 'подписку': 'подписки', 'подписки': 'подписок', 'аккаунт': 'аккаунта', 'оплату': 'оплаты',
+    'платёж': 'платежа', 'платеж': 'платежа', 'данные': 'данных', 'баланс': 'баланса', 'статус': 'статуса',
+    'ссылку': 'ссылки', 'операции': 'операций', 'устройства': 'устройств', 'срок': 'срока',
+}
+_POSSESSIVE = {'ваш': 'вашего', 'вашу': 'вашей', 'ваши': 'ваших', 'вашей': 'вашей'}
+# «Передал(а) X» → «X передан(о/а/ы)»: the object's own gender, never the speaker's.
+_HANDED = {
+    'обращение': ('обращение', 'передано'), 'запрос': ('запрос', 'передан'), 'вопрос': ('вопрос', 'передан'),
+    'заявку': ('заявка', 'передана'), 'информацию': ('информация', 'передана'), 'данные': ('данные', 'переданы'),
+}
+_INFINITIVE = {
+    'помочь': 'помогу', 'подсказать': 'подскажу', 'проверить': 'проверю', 'передать': 'передам', 'ответить': 'отвечу',
+    'уточнить': 'уточню', 'объяснить': 'объясню', 'показать': 'покажу', 'разобраться': 'разберусь',
+}
+
+
+def _cap(word: str, upper: bool) -> str:
+    return word[:1].upper() + word[1:] if upper else word
+
+
+def neutral_self_reference(text: str) -> str:
+    """«Понял», «Рада помочь», «Проверила:» → forms without grammatical gender. Only safe, fixed phrases are rewritten."""
+    if not text:
+        return text
+
+    def start(pattern, pronoun):
+        # The pronoun «я» is part of the phrase; the replacement is capitalised at a sentence start.
+        return re.compile(_START + (r'я[ \t]+' if pronoun else r'(?:я[ \t]+)?') + pattern, re.IGNORECASE)
+
+    def after_pronoun(pattern):
+        return re.compile(r'(?<=[,;:—–(])([ \t]+)я[ \t]+' + pattern, re.IGNORECASE)
+
+    def apply(pattern, make, pronoun=False):
+        nonlocal text
+        text = start(pattern, pronoun).sub(lambda m: m.group(1) + make(m, True), text)
+        text = after_pronoun(pattern).sub(lambda m: m.group(1) + make(m, False), text)
+
+    stop = r'(?=[ \t]*(?:[.,!:;—–)]|$))'
+    apply(r'понял(?:а)?(?:[ \t]+вас)?' + stop, lambda m, up: _cap('понятно', up))
+    apply(r'рад(?:а)?,[ \t]+что\b', lambda m, up: _cap('хорошо, что', up))
+    apply(r'рад(?:а)?[ \t]+(?:это[ \t]+)?слышать', lambda m, up: _cap('отлично', up))
+    apply(r'(?:проверил|посмотрел)(?:а)?' + r'(?=[ \t]*[:—–])', lambda m, up: _cap('проверка показала', up))
+    apply(r'(?:проверил|посмотрел)(?:а)?[ \t]+(по[ \t]+(?:вашему[ \t]+)?(?:аккаунту|данным))(?=[ \t]*[:—–])',
+          lambda m, up: _cap('проверка ', up) + m.group(2) + ' показала')
+
+    def checked(m, up):
+        owner, noun = (m.group(2) or '').casefold(), m.group(3).casefold()
+        return _cap('проверка ', up) + (_POSSESSIVE[owner] + ' ' if owner else '') + _GENITIVE[noun] + ' показала'
+
+    nouns = '|'.join(sorted(_GENITIVE, key=len, reverse=True))
+    apply(r'проверил(?:а)?[ \t]+(?:(ваш|вашу|ваши|вашей)[ \t]+)?(' + nouns + r')(?=[ \t]*[:—–])', checked)
+    apply(r'проверил(?:а)?' + r'(?=[ \t]*(?:[.,!]|$))', lambda m, up: _cap('проверено', up))
+    def handed(m, up):
+        owner, noun = (m.group(2) or '').casefold(), m.group(3).casefold()
+        subject, participle = _HANDED[noun]
+        owner = {'вашу': 'ваша'}.get(owner, owner)
+        return _cap((owner + ' ' if owner else '') + subject + ' ' + participle, up)
+
+    apply(r'передал(?:а)?[ \t]+(?:(ваш|ваше|вашу|ваши)[ \t]+)?(' + '|'.join(_HANDED) + r')\b', handed)
+    apply(r'передал(?:а)?(?=[ \t]+команде\b|[ \t]*(?:[.,!]|$))', lambda m, up: _cap('передано', up))
+    apply(r'не[ \t]+смог(?:ла)?(?=[ \t]+\w+(?:ть|ти|чь)(?:ся)?\b)', lambda m, up: _cap('не удалось', up))
+    # «Должна быть ссылка» is about the link: only «я должен(а) …» is rewritten.
+    apply(r'(?:должен|должна)(?=[ \t]+\w+(?:ть|ти|чь)(?:ся)?\b)', lambda m, up: _cap('нужно', up), pronoun=True)
+    # «Рад(а) помочь!» → «Обращайтесь!»; «Буду рада помочь с настройкой» → «Помогу с настройкой».
+    infinitives = '|'.join(_INFINITIVE)
+
+    def offer(m):
+        verb = m.group('verb').casefold()
+        word = 'обращайтесь' if verb == 'помочь' and m.group('end') is not None else _INFINITIVE[verb]
+        first = m.group('me') or m.group('extra') or m.group('adj')
+        return _cap(word, first[:1].isupper()) + (m.group('end') or '')
+
+    text = re.sub(
+        r'(?:^|(?<=[\s,(>]))(?:(?P<me>я)[ \t]+)?(?P<extra>(?:буду|всегда)[ \t]+(?:(?:буду|всегда)[ \t]+)?)?(?P<adj>рад|рада|готов|готова)[ \t]+'
+        r'(?:был[аи]?[ \t]+)?(?P<verb>' + infinitives + r')\b(?P<end>[ \t]*[.!,;)]|[ \t]*$)?',
+        offer, text, flags=re.IGNORECASE | re.MULTILINE,
+    )
+    return text
 
 
 def initial_greeting(answer: str, first_reply: bool) -> str:

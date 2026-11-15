@@ -127,6 +127,12 @@ def device_action(question: str) -> str | None:
     return None
 
 
+def mentions_connect(answer: str) -> bool:
+    """The answer names the «Подключить устройство» section or its page."""
+    text = re.sub(r'<[^>]*>', '', answer or '')
+    return bool(re.search(r'подключить\s+устройство', text, re.IGNORECASE) or re.search(re.escape(SITE) + r'/connection\b', text))
+
+
 def page_actions(answer: str) -> list[str]:
     """Rule answers already name a cabinet page; offer it as a button."""
     for match in _SITE_LINK.finditer(answer or ''):
