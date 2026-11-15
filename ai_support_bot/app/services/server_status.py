@@ -541,6 +541,96 @@ def _country_from_text(name: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- страны в вопросе клиента
+
+# Окончания после основы названия: «Япони|и», «Казахстан|е», «Нидерланд|ах».
+_CASE_ENDINGS = frozenset({
+    'а', 'у', 'е', 'ы', 'и', 'я', 'ю', 'й', 'ь', 'ей', 'ии', 'ию', 'ией', 'ью',
+    'ом', 'ой', 'ем', 'ам', 'ах', 'ами', 'ов',
+})
+_STRIPPED_TAIL = 'аяиыйеоуь'
+
+# Разговорные названия: проверяются раньше справочника («корея» — Южная, а не Северная).
+_QUESTION_NAME_ALIASES: dict[str, str] = {
+    'корея': 'KR', 'англия': 'GB', 'британия': 'GB', 'америка': 'US', 'голландия': 'NL',
+    'эмираты': 'AE', 'белоруссия': 'BY', 'молдавия': 'MD', 'кыргызстан': 'KG', 'тайланд': 'TH',
+}
+
+# Города и английские названия: слово в вопросе начинается с этой основы.
+_QUESTION_PREFIX_ALIASES: dict[str, str] = {
+    'japan': 'JP', 'токио': 'JP', 'turkey': 'TR', 'стамбул': 'TR', 'poland': 'PL', 'варшав': 'PL',
+    'britain': 'GB', 'england': 'GB', 'лондон': 'GB', 'london': 'GB', 'kazakhstan': 'KZ',
+    'алмат': 'KZ', 'астан': 'KZ', 'singapore': 'SG', 'дубай': 'AE', 'dubai': 'AE', 'uae': 'AE',
+    'germany': 'DE', 'франкфурт': 'DE', 'берлин': 'DE', 'finland': 'FI', 'хельсинк': 'FI',
+    'france': 'FR', 'париж': 'FR', 'netherlands': 'NL', 'амстердам': 'NL', 'sweden': 'SE',
+    'стокгольм': 'SE', 'latvia': 'LV', 'estonia': 'EE', 'таллин': 'EE', 'russia': 'RU',
+    'москв': 'RU', 'usa': 'US', 'america': 'US', 'нью-йорк': 'US', 'china': 'CN', 'korea': 'KR',
+    'india': 'IN', 'armenia': 'AM', 'georgia': 'GE', 'ukraine': 'UA', 'israel': 'IL',
+    'spain': 'ES', 'italy': 'IT', 'египт': 'EG',
+}
+
+_QUESTION_WORD_RE = re.compile(r'[a-zа-я]+(?:-[a-zа-я]+)*')
+
+
+def _question_form(name: str) -> tuple[str, str, frozenset[str]]:
+    """Как искать название в вопросе: (слово целиком, основа, окончания после основы)."""
+    word = name.lower().replace('ё', 'е')
+    parts = word.split()
+    if len(parts) > 1:
+        # «Южная Корея» → «корея», «Босния и Герцеговина» → «босния».
+        word = parts[0] if parts[1] == 'и' else parts[-1]
+    if name.isupper() or len(word) <= 3:
+        return word, word, frozenset({''})
+    if word[-1] in _STRIPPED_TAIL:
+        # Без окончания основа не считается: «грузи» и «грузит» — не Грузия.
+        return word, word[:-1], _CASE_ENDINGS
+    return word, word, _CASE_ENDINGS | {''}
+
+
+_QUESTION_FORMS: list[tuple[str, str, frozenset[str], str]] = [
+    (*_question_form(name), code)
+    for name, code in list(_QUESTION_NAME_ALIASES.items())
+    + [(name, code) for code, name in COUNTRY_NAMES.items() if code != 'EU']
+]
+
+
+def _token_country(token: str) -> str | None:
+    for word, stem, endings, code in _QUESTION_FORMS:
+        if token == word or (token.startswith(stem) and token[len(stem):] in endings):
+            return code
+    for prefix, code in _QUESTION_PREFIX_ALIASES.items():
+        if token.startswith(prefix):
+            return code
+    return None
+
+
+def asked_countries(question: str) -> list[str]:
+    """Коды стран из вопроса в порядке упоминания: «Есть сервер в Японии?» → ['JP']."""
+    found: list[str] = []
+    for token in _QUESTION_WORD_RE.findall((question or '').lower().replace('ё', 'е')):
+        code = _token_country(token)
+        if code and code not in found:
+            found.append(code)
+    return found
+
+
+def _asked_lines(question: str, labels: list[str]) -> list[str]:
+    """Подсказка модели по странам из вопроса: есть ли они в списке."""
+    asked = [country_name(code) for code in asked_countries(question)]
+    missing = [name for name in asked if name not in labels]
+    present = [name for name in asked if name in labels]
+    lines: list[str] = []
+    if missing:
+        lines.append(
+            f'Клиент спросил про {"страны" if len(missing) > 1 else "страну"}: {", ".join(missing)}. '
+            'Таких серверов у нас сейчас нет — так и скажи и предложи 2–3 зарубежные страны из списка; '
+            'Россию взамен не предлагай.'
+        )
+    if present:
+        lines.append(f'{", ".join(present)} — есть в списке выше.')
+    return lines
+
+
 def _group_key(raw: str) -> str:
     if _WHITELIST_RE.search(raw.replace('ё', 'е')):
         return _WHITELIST_KEY
@@ -683,8 +773,11 @@ def _msk(ts: float, fmt: str) -> str:
     return datetime.fromtimestamp(ts, MSK).strftime(fmt)
 
 
-def format_status_block(status: ServerStatus | None, now: float | None = None) -> str:
-    """Текст для промпта. '' — если данных нет или они старше SERVER_STATUS_MAX_STALE."""
+def format_status_block(status: ServerStatus | None, now: float | None = None, question: str = '') -> str:
+    """Текст для промпта. '' — если данных нет или они старше SERVER_STATUS_MAX_STALE.
+
+    ``question`` — вопрос клиента: страны из него сверяются со списком прямо в блоке.
+    """
     if status is None:
         return ''
     now = _now() if now is None else now
@@ -710,6 +803,7 @@ def format_status_block(status: ServerStatus | None, now: float | None = None) -
         groups = group_proxies(proxies.items)
         for label, names in groups:
             lines.append(f'• {label}: {", ".join(names)} — {_group_state(names)}')
+        lines.extend(_asked_lines(question, [label for label, _ in groups]))
         if any(label == WHITELIST_GROUP for label, _ in groups):
             lines.append(
                 f'«{WHITELIST_GROUP}» — только для заглушек мобильного интернета, когда оператор открывает '
@@ -737,13 +831,13 @@ def format_status_block(status: ServerStatus | None, now: float | None = None) -
     return '\n'.join(lines)
 
 
-async def build_status_block() -> str:
+async def build_status_block(question: str = '') -> str:
     """Готовый блок для промпта; '' если выключено, ничего не настроено или данных нет."""
     try:
         if not _enabled():
             return ''
         status = await get_server_status()
-        return format_status_block(status)
+        return format_status_block(status, question=question)
     except Exception as error:
         logger.warning('Server status block failed', error=_describe_error(error))
         return ''

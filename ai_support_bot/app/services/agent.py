@@ -603,7 +603,7 @@ class SupportAgent:
             # Countries and outages come from live monitoring, not from old tickets.
             recent_user = ' '.join(item.content or '' for item in history[-2:] if item.role == 'user')
             if server_status.status_relevant(question, recent_user):
-                status_block = await server_status.build_status_block()
+                status_block = await server_status.build_status_block(question)
 
         system_prompt = self._build_system_prompt(
             knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block, status=status_block

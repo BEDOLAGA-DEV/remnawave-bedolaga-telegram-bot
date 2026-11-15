@@ -580,3 +580,58 @@ def test_whitelist_servers_carry_a_usage_note():
     block = ss.format_status_block(status, now=T0)
     assert 'только для заглушек мобильного интернета' in block
     assert block.index('• Белые списки') < block.index('только для заглушек')
+
+
+@pytest.mark.parametrize(
+    ('question', 'codes'),
+    [
+        ('Есть сервер в Японии?', ['JP']),
+        ('А Турция есть?', ['TR']),
+        ('Подскажите, есть ли Казахстан', ['KZ']),
+        ('Нужен сервер в Казахстане', ['KZ']),
+        ('В США или Германии быстрее?', ['US', 'DE']),
+        ('Есть Нидерланды? А в Нидерландах быстро?', ['NL']),
+        ('Нужна Южная Корея', ['KR']),
+        ('Есть корейский сервер? Корея нужна', ['KR']),
+        ('Можно сервер в Грузии?', ['GE']),
+        ('Есть сервер в Беларуси?', ['BY']),
+        ('Есть Токио?', ['JP']),
+        ('japan server?', ['JP']),
+        ('Нужен Египет, в Египте отдыхаю', ['EG']),
+    ],
+)
+def test_asked_countries_finds_countries_in_any_case(question, codes):
+    assert ss.asked_countries(question) == codes
+
+
+@pytest.mark.parametrize(
+    'question',
+    [
+        'Ничего не грузит',
+        'Не могу загрузить приложение, грузи быстрее',
+        'Вы починили сервер?',
+        'Позовите команду',
+        'Индивидуальный тариф есть?',
+        'На английском можно?',
+        'Задания не открываются',
+    ],
+)
+def test_asked_countries_ignores_ordinary_words(question):
+    assert ss.asked_countries(question) == []
+
+
+def test_status_block_says_which_asked_countries_are_missing():
+    records = ss.parse_xray_metrics(SAMPLE)
+    status = ss.ServerStatus(checked_at=T0, proxies=ss.SourceSnapshot(items=tuple(records), fetched_at=T0), nodes=None)
+    labels = [label for label, _ in ss.group_proxies(records)]
+    assert 'Германия' in labels and 'Япония' not in labels
+
+    block = ss.format_status_block(status, now=T0, question='Есть сервер в Японии или в Германии?')
+    assert 'Клиент спросил про страну: Япония. Таких серверов у нас сейчас нет' in block
+    assert 'Германия — есть в списке выше.' in block
+    assert block.index('• Германия') < block.index('Клиент спросил')
+
+    plain = ss.format_status_block(status, now=T0, question='Германия не работает')
+    assert 'Клиент спросил' not in plain
+    assert 'Германия — есть в списке выше.' in plain
+    assert 'Клиент спросил' not in ss.format_status_block(status, now=T0)
