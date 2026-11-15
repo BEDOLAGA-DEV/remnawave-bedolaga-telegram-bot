@@ -1165,7 +1165,7 @@ async def test_paid_but_inactive_access_requests_receipt_not_connect_button(flow
     captured['reply'] = 'Нажмите кнопку подключения.'
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, question)
-    assert 'чек или выписку' in result['answer']
+    assert 'чек этой операции' in result['answer']
     assert 'Нажмите кнопку подключения' not in result['answer']
     assert not result['escalate']
     async with Session() as db:
@@ -1270,7 +1270,7 @@ async def test_semantic_paid_access_tool_checks_arbitrary_wording(flow, monkeypa
     captured['responses'] = [_tool_reply('check_paid_access', {}), {'content': 'Просто включите приложение.'}]
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Заказ завершён, а услуга всё ещё не появилась')
-    assert 'чек или выписку' in result['answer']
+    assert 'чек этой операции' in result['answer']
 
 
 @pytest.mark.asyncio
@@ -1282,7 +1282,7 @@ async def test_paid_access_multiple_subscriptions_do_not_loop_before_handoff(flo
     }))
     async with Session() as db:
         first = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите впн')
-    assert 'чек или выписку' in first['answer']
+    assert 'чек этой операции' in first['answer']
     captured['responses'] = [_tool_reply('save_support_details', {'receipt_reported': True, 'purchase_channel': 'telegram'}),
                              {'content': 'Для какой подписки?'}]
     async with Session() as db:
@@ -1324,7 +1324,7 @@ async def test_paid_access_short_question_keeps_case_and_receipt_request(flow, m
         first = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
         original = await agent_mod.crud.get_or_create_conversation(db, 4242)
         original_id = original.id
-    assert 'чек или выписку' in first['answer']
+    assert 'чек этой операции' in first['answer']
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как включить?')
         current = await agent_mod.crud.get_or_create_conversation(db, 4242)
@@ -1650,3 +1650,38 @@ async def test_price_and_device_questions_get_buttons_from_code(flow, monkeypatc
     async with Session() as db:
         tariffs = await agent_mod.support_agent.generate_answer(db, 4444, 'Какие есть тарифы?')
     assert tariffs['buttons'][0][0]['text'] == 'Продлить подписку'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', ['Не работают', 'Ничего старого нет\nЯ хочу добавить новое\nЛимит увеличил'])
+async def test_payment_tools_are_refused_without_a_payment_claim(flow, question):
+    captured, agent_mod, Session = flow
+    captured['responses'] = [_tool_reply('check_subscription_renewal', {}), {'content': 'Подскажите, какое приложение у вас стоит?'}]
+
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+
+    assert 'чек' not in result['answer'] and 'Проверим оплату' not in result['answer']
+    assert not (conversation.support_state or {}).get('renewal_verification')
+    assert (conversation.support_state or {}).get('issue') != 'payment_activation'
+
+
+@pytest.mark.asyncio
+async def test_ended_subscriptions_and_vpn_not_working_get_renewal_instead_of_steps(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    context = ('  • подписка №1 (id=101), статус=expired, триал=нет, до 09.09.2026 (истекла 67 дн. назад), трафик=∞\n'
+               '  • подписка №2 (id=102), статус=active, триал=нет, до 08.11.2026 (истекла 7 дн. назад), трафик=∞')
+
+    async def ended_context(telegram_id, email=None):
+        return context
+
+    monkeypatch.setattr(agent_mod, 'build_user_context', ended_context)
+    captured['reply'] = 'Перезапустите приложение и смените сервер.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Здравствуйте, не работает подписка')
+
+    assert 'Подписка закончилась 08.11.2026' in result['answer']
+    assert 'Перезапустите' not in result['answer']
+    assert [row[0]['url'] for row in result['buttons']] == [
+        'https://web.slig.app/subscriptions/101/renew', 'https://web.slig.app/subscriptions/102/renew']

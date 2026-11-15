@@ -123,7 +123,7 @@ async def test_price_question_clears_stale_renewal_flags_case_334(flow, monkeypa
         current = await agent_mod.crud.get_or_create_conversation(db, 4242)
         assert current.support_state == {'issue': 'other'}
     assert result['answer'].endswith('Продление Стандарта на месяц стоит 219 ₽.')
-    assert 'Пока не подтверждено' not in result['answer']
+    assert 'Проверим оплату' not in result['answer']
     assert not result['escalate']
     assert 'месяц=219 ₽' in captured['prompts'][-1]
     catalog.assert_awaited_once()
@@ -156,8 +156,8 @@ async def test_site_answer_moves_renewal_check_forward_case_324(flow, monkeypatc
         ])
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'На сайте оплачивала https://web.slig.app/')
-    assert 'Пока не подтверждено' not in result['answer']
-    assert 'Пришлите чек этой операции' in result['answer']
+    assert 'Проверим оплату' not in result['answer']
+    assert 'чек этой операции' in result['answer']
     assert not result['escalate']
 
 
@@ -253,7 +253,7 @@ async def test_receipt_request_is_not_repeated_for_any_new_message_dialogue_236(
     _access(monkeypatch, {'status': 'ok', 'active_paid_subscription': False})
     async with Session() as db:
         first = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатила, включите впн')
-    assert 'Пришлите чек или выписку' in first['answer']
+    assert 'Пришлите чек этой операции' in first['answer']
     for question in ('Не работают', 'Вы тут?'):
         async with Session() as db:
             result = await agent_mod.support_agent.generate_answer(db, 4242, question)
@@ -311,7 +311,7 @@ async def test_expired_state_without_any_saved_messages_is_dropped(flow):
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как подключить VPN на телевизоре?')
         current = await agent_mod.crud.get_or_create_conversation(db, 4242)
         assert current.id != old_id
-    assert 'Пока не подтверждено' not in result['answer']
+    assert 'Проверим оплату' not in result['answer']
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_explicit_repeat_request_gets_the_same_template(flow, monkeypatch)
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Повторите, пожалуйста, что прислать')
     assert not result['escalate']
-    assert 'Пришлите чек или выписку' in result['answer']
+    assert 'Пришлите чек этой операции' in result['answer']
     assert result['answer'] in first['answer']
 
 

@@ -150,3 +150,11 @@ def test_customer_without_subscriptions_gets_buy():
 ])
 def test_device_questions_map_to_connect_or_device_list(question, expected):
     assert answer_buttons.device_action(question) == expected
+
+
+def test_expired_until_is_none_while_any_subscription_works():
+    assert answer_buttons.expired_until(REAL_CONTEXT) is None
+    ended = REAL_CONTEXT.splitlines()[1]
+    assert answer_buttons.expired_until(ended) == ('07.11.2026', True)
+    assert answer_buttons.expired_until('  • подписка №1 (id=5), статус=expired, триал=да, до 01.11.2026 (истекла 14 дн. назад)') == ('01.11.2026', False)
+    assert answer_buttons.expired_until('') is None

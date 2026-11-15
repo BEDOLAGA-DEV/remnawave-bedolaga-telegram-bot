@@ -1,5 +1,6 @@
 """Buttons under an answer: the model names an action, the code supplies a checked address."""
 import re
+from datetime import datetime
 
 from ai_support_bot.app.services.telegram_html import is_allowed_link
 
@@ -86,6 +87,21 @@ def renew_buttons(user_context: str) -> list[list[dict]]:
         return [[{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/{subscriptions[0][1]}/renew', 'style': 'success'}]]
     return [[{'text': f'Продлить №{number} · до {end}', 'url': f'{SITE}/subscriptions/{sub_id}/renew', 'style': 'success'}]
             for number, sub_id, end in subscriptions[:MAX_BUTTONS]]
+
+
+_SUBSCRIPTION_STATE = re.compile(r'подписка №\d+ \(id=\d+\), статус=([^,]*), триал=(да|нет), до ([\d.]+)( \(истекла)?')
+
+
+def expired_until(user_context: str) -> tuple[str, bool] | None:
+    """When none of the subscriptions works: the latest end date and whether a paid one exists."""
+    found = _SUBSCRIPTION_STATE.findall(user_context or '')
+    if not found or any(status.strip() == 'active' and not expired for status, _, _, expired in found):
+        return None
+    try:
+        latest = max(found, key=lambda item: datetime.strptime(item[2], '%d.%m.%Y'))
+    except ValueError:
+        return None
+    return latest[2], any(trial == 'нет' for _, trial, _, _ in found)
 
 
 def renew_answer(rows: list[list[dict]]) -> str:

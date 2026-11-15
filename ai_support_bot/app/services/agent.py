@@ -84,6 +84,12 @@ _SERIOUS_REASONS = {
     'payment_dispute', 'refund', 'partnership',
 }
 _LEAD_EMOJI = {'apps': '🚀', 'recovery': '🛡', 'navigation': '🌐', 'wheel': '🎁'}
+_PAYMENT_TOOLS = {'check_paid_access', 'check_subscription_renewal'}
+_PAYMENT_CLAIM = re.compile(
+    r'плат|списа|деньг|чек|выписк|квитанц|транзакц|пополн|купил|купл|покупк|заказ|перев[её]л|внес|внёс|средств'
+    r'|руб|₽|зачт|зачисл|засчит|сбп|stars|зв[её]зд',
+    re.IGNORECASE,
+)
 
 _SMALLTALK_PATTERNS = (
     r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
@@ -232,6 +238,7 @@ class SupportAgent:
         usage = {'tokens_prompt': 0, 'tokens_completion': 0}
         tools_used = False
         executed = 0
+        with_image = any(isinstance(item.get('content'), list) for item in messages if item.get('role') == 'user')
         for round_number in range(3):
             options = {'tools': SUPPORT_TOOLS, 'tool_choice': 'none' if round_number == 2 else 'auto'} if enable_tools else {}
             if enable_tools and force_service_check and round_number == 0:
@@ -254,6 +261,9 @@ class SupportAgent:
                 function = call.get('function') or {}
                 if executed >= 4:
                     output = {'error': 'Лимит вызовов исчерпан. Ответь по собранным данным или передай обращение.'}
+                elif function.get('name') in _PAYMENT_TOOLS and not _PAYMENT_CLAIM.search(evidence) and not with_image:
+                    # Payment checks set sticky payment flags; «не работает» or «лимит увеличил» must not start them.
+                    output = {'error': 'Клиент не сообщал об оплате: не проверяй оплату, ответь на его вопрос по данным аккаунта.'}
                 else:
                     output = await execute_support_tool(
                         function.get('name', ''), function.get('arguments', ''), telegram_id, state, evidence,
@@ -678,9 +688,8 @@ class SupportAgent:
                 if support_state.get('receipt_reported'):
                     answer_text, escalate = payment_next_step(support_state)
                 else:
-                    answer_text = ('Проверяю доступ после оплаты. Пришлите чек или выписку по этой операции, '
-                                   'где видны сумма, время и идентификатор платежа. '
-                                   'Данные карты и остальные операции можно скрыть. Повторно оплачивать не нужно.')
+                    answer_text = ('Проверю, дошла ли оплата. Пришлите чек этой операции: сумма, время и номер платежа. '
+                                   'Данные карты можно скрыть. Повторно оплачивать не нужно.')
         if not forced_reason and not direct_answer and support_state.get('issue') == 'payment_missing':
             answer_text, escalate = payment_next_step(support_state)
             templated = True
@@ -752,6 +761,19 @@ class SupportAgent:
                 buttons = answer_buttons.renew_buttons(context) or answer_buttons.build(['buy'])
             else:
                 buttons = answer_buttons.build([device_action], context)
+        # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
+        if not (serious or escalate or renewal_wish) and (
+            starts_technical_issue(question) or re.search(r'не\s+работа|не\s+подключ', question, re.IGNORECASE)
+        ):
+            context = user_context or await build_user_context(telegram_id)
+            if ended := answer_buttons.expired_until(context):
+                until, paid = ended
+                answer_text = decorate(
+                    f'Подписка закончилась {until}, поэтому VPN не работает. Продлите её по кнопке ниже.' if paid else
+                    f'Пробный период закончился {until}, поэтому VPN не работает. Оформить подписку можно по кнопке ниже.',
+                    lead='⏳',
+                )
+                buttons = answer_buttons.renew_buttons(context)
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,
