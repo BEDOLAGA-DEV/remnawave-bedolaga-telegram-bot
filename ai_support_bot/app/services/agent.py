@@ -745,9 +745,10 @@ class SupportAgent:
                 answer_text = decorate(answer_buttons.renew_answer(buttons), lead='⏳')
         # The model often skips buttons for prices and devices; the next step is clear, so the code adds it.
         device_action = answer_buttons.device_action(question)
-        if not buttons and not (serious or escalate) and (pricing_question or device_action):
+        price_like = pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE))
+        if not buttons and not (serious or escalate) and (price_like or device_action):
             context = user_context or await build_user_context(telegram_id)
-            if pricing_question:
+            if price_like:
                 buttons = answer_buttons.renew_buttons(context) or answer_buttons.build(['buy'])
             else:
                 buttons = answer_buttons.build([device_action], context)

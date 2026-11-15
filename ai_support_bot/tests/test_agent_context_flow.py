@@ -1645,3 +1645,8 @@ async def test_price_and_device_questions_get_buttons_from_code(flow, monkeypatc
     assert 'Стандарт' in price['answer']
     assert price['buttons'][0][0]['text'] == 'Продлить подписку'
     assert device['buttons'] == [[{'text': 'Подключить устройство', 'url': 'https://web.slig.app/connection', 'style': 'primary'}]]
+
+    captured['reply'] = 'Есть тарифы «Стандарт», «Семейный» и «Корпоративный».'
+    async with Session() as db:
+        tariffs = await agent_mod.support_agent.generate_answer(db, 4444, 'Какие есть тарифы?')
+    assert tariffs['buttons'][0][0]['text'] == 'Продлить подписку'
