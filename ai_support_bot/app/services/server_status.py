@@ -713,7 +713,9 @@ def format_status_block(status: ServerStatus | None, now: float | None = None) -
         if any(label == WHITELIST_GROUP for label, _ in groups):
             lines.append(
                 f'«{WHITELIST_GROUP}» — только для заглушек мобильного интернета, когда оператор открывает '
-                'лишь сайты из белого списка. При обычных сбоях, медленной работе и на Wi‑Fi их не советуй.'
+                'лишь сайты из белого списка. При обычных сбоях, медленной работе и на Wi‑Fi их не советуй. '
+                'Пропускает ли их оператор, мониторинг не видит: не пиши, что белые списки «работают», '
+                'пиши, что серверы включены.'
             )
         if all(not record.ok for record in proxies.items):
             lines.append(
