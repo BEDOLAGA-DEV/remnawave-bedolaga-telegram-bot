@@ -475,3 +475,21 @@ async def test_model_greeting_after_handoff_emoji_greets_once(flow):
     assert 'tg-emoji' in result['answer']
     assert result['answer'].count('Здравствуйте') == 1
     assert not result['answer'].startswith('Здравствуйте!\n\n')
+
+
+@pytest.mark.parametrize(
+    ('evidence', 'claimed'),
+    [
+        # Т#215: a VPN complaint that mentions the bought subscription is not a payment claim.
+        ('Почему в период моей купленной подписки не разу не работали белые списки, при этом пинг показывает , '
+         'но при включении ничего не грузит', False),
+        ('Оплатил подписку, а VPN не работает', True),
+        ('Заказ завершён, а услуга всё ещё не появилась', True),
+        ('Купил подписку, где ссылка?', True),
+        ('Не работает VPN', False),
+    ],
+)
+def test_payment_tools_need_a_payment_claim(evidence, claimed):
+    from ai_support_bot.app.services.agent import _payment_claimed
+
+    assert _payment_claimed(evidence) is claimed

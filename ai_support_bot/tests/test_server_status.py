@@ -572,3 +572,11 @@ def test_status_relevant_follow_up_uses_recent():
     assert ss.status_relevant('а сейчас?', recent='как оплатить') is False
     long_question = 'как оплатить подписку на год, если у меня карта другого банка нет, только СБП ' * 2
     assert ss.status_relevant(long_question.replace('банка', 'кредитки'), recent='Германия не работает') is False
+
+
+def test_whitelist_servers_carry_a_usage_note():
+    records = ss.parse_xray_metrics(SAMPLE)
+    status = ss.ServerStatus(checked_at=T0, proxies=ss.SourceSnapshot(items=tuple(records), fetched_at=T0), nodes=None)
+    block = ss.format_status_block(status, now=T0)
+    assert 'только для заглушек мобильного интернета' in block
+    assert block.index('• Белые списки') < block.index('только для заглушек')

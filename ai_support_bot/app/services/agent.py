@@ -96,6 +96,18 @@ _PAYMENT_CLAIM = re.compile(
     r'|руб|₽|зачт|зачисл|засчит|сбп|stars|зв[её]зд',
     re.IGNORECASE,
 )
+# «В период купленной подписки ничего не грузит» is a VPN complaint: only money words make it a payment claim.
+_PAYMENT_STRONG = re.compile(
+    r'плат|списа|деньг|чек|выписк|квитанц|транзакц|пополн|руб|₽|зачт|зачисл|засчит|сбп|stars|зв[её]зд', re.IGNORECASE
+)
+_TECH_COMPLAINT = re.compile(r'не\s+(?:работа|грузит|загружа|подключ|открыва)|ничего\s+не\s+груз', re.IGNORECASE)
+
+
+def _payment_claimed(evidence: str) -> bool:
+    if not _PAYMENT_CLAIM.search(evidence):
+        return False
+    return bool(_PAYMENT_STRONG.search(evidence)) or not _TECH_COMPLAINT.search(evidence)
+
 
 _SMALLTALK_PATTERNS = (
     r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
@@ -267,7 +279,7 @@ class SupportAgent:
                 function = call.get('function') or {}
                 if executed >= 4:
                     output = {'error': 'Лимит вызовов исчерпан. Ответь по собранным данным или передай обращение.'}
-                elif function.get('name') in _PAYMENT_TOOLS and not _PAYMENT_CLAIM.search(evidence) and not with_image:
+                elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and not with_image:
                     # Payment checks set sticky payment flags; «не работает» or «лимит увеличил» must not start them.
                     output = {'error': 'Клиент не сообщал об оплате: не проверяй оплату, ответь на его вопрос по данным аккаунта.'}
                 else:

@@ -707,8 +707,14 @@ def format_status_block(status: ServerStatus | None, now: float | None = None) -
         else:
             when = _msk(proxies.fetched_at, '%d.%m %H:%M')
             lines.append(f'Серверы SligVPN по нашему мониторингу на {when} МСК. Это полный список: других стран сейчас нет.')
-        for label, names in group_proxies(proxies.items):
+        groups = group_proxies(proxies.items)
+        for label, names in groups:
             lines.append(f'• {label}: {", ".join(names)} — {_group_state(names)}')
+        if any(label == WHITELIST_GROUP for label, _ in groups):
+            lines.append(
+                f'«{WHITELIST_GROUP}» — только для заглушек мобильного интернета, когда оператор открывает '
+                'лишь сайты из белого списка. При обычных сбоях, медленной работе и на Wi‑Fi их не советуй.'
+            )
         if all(not record.ok for record in proxies.items):
             lines.append(
                 'Ни один сервер не ответил мониторингу: возможен общий сбой или сбой самого мониторинга.'
