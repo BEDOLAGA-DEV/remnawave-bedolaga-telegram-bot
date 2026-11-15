@@ -1623,3 +1623,25 @@ async def test_plain_renewal_wish_clears_payment_flags_and_gets_renew_buttons(fl
     assert result['buttons'] == [[{'text': 'Продлить подписку', 'url': 'https://web.slig.app/subscriptions/57923/renew',
                                    'style': 'success'}]]
     assert conversation.support_state == {'issue': 'other'}
+
+
+@pytest.mark.asyncio
+async def test_price_and_device_questions_get_buttons_from_code(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    context = '  • подписка №1 (id=57923), статус=active, триал=нет, до 14.12.2026 (осталось 29 дн.), трафик=∞'
+
+    async def real_context(telegram_id, email=None):
+        return context
+
+    monkeypatch.setattr(agent_mod, 'build_user_context', real_context)
+    monkeypatch.setattr(agent_mod.settings_store, 'get_bool', lambda key: False if key == 'NAVIGATION_ENABLED' else True)
+    captured['reply'] = 'Тариф «Стандарт» есть на 30, 90, 180 и 365 дней.'
+    async with Session() as db:
+        price = await agent_mod.support_agent.generate_answer(db, 4242, 'Сколько стоит подписка на 3 месяца?')
+    captured['reply'] = 'Откройте свою подписку на новом устройстве и добавьте её в приложение.'
+    async with Session() as db:
+        device = await agent_mod.support_agent.generate_answer(db, 4343, 'Как добавить ещё одно устройство?')
+
+    assert 'Стандарт' in price['answer']
+    assert price['buttons'][0][0]['text'] == 'Продлить подписку'
+    assert device['buttons'] == [[{'text': 'Подключить устройство', 'url': 'https://web.slig.app/connection', 'style': 'primary'}]]

@@ -138,3 +138,15 @@ def test_unreadable_subscriptions_get_no_buttons_rather_than_buy():
 
 def test_customer_without_subscriptions_gets_buy():
     assert answer_buttons.renew_buttons('Баланс: 0 ₽\nПодписки: отсутствуют')[0][0]['text'] == 'Купить подписку'
+
+
+@pytest.mark.parametrize(('question', 'expected'), [
+    ('Как добавить ещё одно устройство?', 'connect'),
+    ('Хочу подключить телевизор', 'connect'),
+    ('Превышен лимит устройств', 'devices'),
+    ('Как удалить старое устройство?', 'devices'),
+    ('Сколько устройств входит в тариф?', None),
+    ('Не работает VPN', None),
+])
+def test_device_questions_map_to_connect_or_device_list(question, expected):
+    assert answer_buttons.device_action(question) == expected

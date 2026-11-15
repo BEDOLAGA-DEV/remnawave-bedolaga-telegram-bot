@@ -97,6 +97,20 @@ def renew_answer(rows: list[list[dict]]) -> str:
     return 'Продлить можно по кнопке ниже — в том числе заранее, пока подписка активна.'
 
 
+_DEVICE = re.compile(r'устройств|девайс|телевизор|\bтв\b|ноутбук|компьютер|планшет|ipad|айпад|macbook|макбук', re.IGNORECASE)
+
+
+def device_action(question: str) -> str | None:
+    """«Добавить/подключить ещё одно устройство» → connect; «удалить, лимит, превышено» → the device list."""
+    if not _DEVICE.search(question or ''):
+        return None
+    if re.search(r'удал|сброс|отвяз|лимит|превыш|максимальн', question, re.IGNORECASE):
+        return 'devices'
+    if re.search(r'добав|подключ|ещ[её]|втор|нов|друг', question, re.IGNORECASE):
+        return 'connect'
+    return None
+
+
 def page_actions(answer: str) -> list[str]:
     """Rule answers already name a cabinet page; offer it as a button."""
     for match in _SITE_LINK.finditer(answer or ''):
