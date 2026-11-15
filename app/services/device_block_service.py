@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -89,7 +89,7 @@ class DeviceBlockService:
 
         # Scope the ban to the subscription (Remnawave short UUID). Best-effort:
         # if it can't be resolved we fall back to a global ban (short_uuid=None).
-        short_uuid = await self._resolve_short_uuid(remnawave_uuid)
+        short_uuid = await self._resolve_short_uuid(remnawave_uuid, panel_user_id)
 
         block = await crud.upsert_block(
             db,
@@ -313,13 +313,20 @@ class DeviceBlockService:
         except Exception as exc:
             logger.warning('Failed to remove blocked device from panel (best-effort)', error=str(exc)[:300])
 
-    async def _resolve_short_uuid(self, remnawave_uuid: str | None) -> str | None:
-        """Resolve the Remnawave public subscription key (short UUID) for a panel
-        UUID from the bot's own `subscriptions` table. The panel has no
-        get-user-by-uuid endpoint (only by id / short-uuid / username), so the
-        verbatim `remnawave_short_uuid` we already store is the reliable source.
-        Best-effort: returns None on any failure (→ global ban)."""
-        if not remnawave_uuid:
+    async def _resolve_short_uuid(
+        self, remnawave_uuid: str | None = None, panel_user_id: int | None = None
+    ) -> str | None:
+        """Resolve the Remnawave public subscription key (short UUID) from the bot's
+        own `subscriptions` table. The panel has no get-user-by-uuid endpoint (only
+        by id / short-uuid / username), so the verbatim `remnawave_short_uuid` we
+        already store is the reliable source. Matches on the numeric panel id
+        (Remnawave 3.0.0) and/or the legacy uuid. Best-effort: None → global ban."""
+        conditions = []
+        if panel_user_id is not None:
+            conditions.append(Subscription.remnawave_id == panel_user_id)
+        if remnawave_uuid:
+            conditions.append(Subscription.remnawave_uuid == remnawave_uuid)
+        if not conditions:
             return None
         from app.database.database import AsyncSessionLocal
 
@@ -327,7 +334,7 @@ class DeviceBlockService:
             async with AsyncSessionLocal() as db:
                 row = await db.execute(
                     select(Subscription.remnawave_short_uuid).where(
-                        Subscription.remnawave_uuid == remnawave_uuid,
+                        or_(*conditions),
                         Subscription.remnawave_short_uuid.is_not(None),
                     )
                 )
