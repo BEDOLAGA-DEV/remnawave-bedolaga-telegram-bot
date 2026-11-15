@@ -740,6 +740,9 @@ class SupportAgent:
         buttons = answer_buttons.build(button_actions, user_context)
         if renewal_wish and not (serious or escalate):
             buttons = answer_buttons.renew_buttons(user_context or await build_user_context(telegram_id))
+            # The buttons already lead to the renewal page; a price question keeps the prices.
+            if buttons and not pricing_question:
+                answer_text = decorate(answer_buttons.renew_answer(buttons), lead='⏳')
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,

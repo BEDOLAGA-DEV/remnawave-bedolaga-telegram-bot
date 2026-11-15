@@ -74,15 +74,27 @@ _SUBSCRIPTION_LINE = re.compile(r'подписка №(\d+) \(id=(\d+)\), ста
 
 
 def renew_buttons(user_context: str) -> list[list[dict]]:
-    """Green buttons straight to the renewal page of each paid subscription; a trial-only customer gets «buy»."""
-    subscriptions = [(number, sub_id, end) for number, sub_id, trial, end in _SUBSCRIPTION_LINE.findall(user_context or '')
-                     if trial == 'нет']
+    """Green buttons straight to the renewal page of each paid subscription; a trial-only customer gets «buy».
+
+    Nothing is offered when no subscription could be read: «buy» must not be shown to someone who has one.
+    """
+    found = _SUBSCRIPTION_LINE.findall(user_context or '')
+    subscriptions = [(number, sub_id, end) for number, sub_id, trial, end in found if trial == 'нет']
     if not subscriptions:
-        return build(['buy'])
+        return build(['buy']) if found or 'Подписки: отсутствуют' in (user_context or '') else []
     if len(subscriptions) == 1:
         return [[{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/{subscriptions[0][1]}/renew', 'style': 'success'}]]
     return [[{'text': f'Продлить №{number} · до {end}', 'url': f'{SITE}/subscriptions/{sub_id}/renew', 'style': 'success'}]
             for number, sub_id, end in subscriptions[:MAX_BUTTONS]]
+
+
+def renew_answer(rows: list[list[dict]]) -> str:
+    """Short text under renew buttons: no menu path to read, no «write 1 or 2»."""
+    if rows and rows[0][0]['text'] == ACTIONS['buy'][0]:
+        return 'Оформить подписку можно по кнопке ниже.'
+    if len(rows) > 1:
+        return 'Выберите подписку на кнопке ниже — продлить можно и заранее, пока она активна.'
+    return 'Продлить можно по кнопке ниже — в том числе заранее, пока подписка активна.'
 
 
 def page_actions(answer: str) -> list[str]:

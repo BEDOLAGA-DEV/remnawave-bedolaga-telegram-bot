@@ -1618,7 +1618,8 @@ async def test_plain_renewal_wish_clears_payment_flags_and_gets_renew_buttons(fl
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Продлить подписку')
         conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
 
-    assert result['answer'].endswith('Продлить можно заранее — по кнопке ниже.')
+    assert result['answer'].endswith('Продлить можно по кнопке ниже — в том числе заранее, пока подписка активна.')
+    assert '→' not in result['answer']
     assert result['buttons'] == [[{'text': 'Продлить подписку', 'url': 'https://web.slig.app/subscriptions/57923/renew',
                                    'style': 'success'}]]
     assert conversation.support_state == {'issue': 'other'}

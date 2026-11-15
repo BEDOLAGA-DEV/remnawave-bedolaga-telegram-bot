@@ -123,3 +123,18 @@ async def test_payment_tools_do_not_set_flags_for_a_plain_renewal_wish():
 
     assert 'error' in result
     assert state == {'issue': 'other', '_renewal_request': True}
+
+
+def test_renew_answer_is_one_short_line_for_each_case():
+    assert answer_buttons.renew_answer(answer_buttons.renew_buttons(REAL_CONTEXT)).startswith('Выберите подписку на кнопке ниже')
+    assert answer_buttons.renew_answer(answer_buttons.renew_buttons(REAL_CONTEXT.splitlines()[0])).startswith('Продлить можно по кнопке ниже')
+    assert answer_buttons.renew_answer(answer_buttons.renew_buttons(REAL_CONTEXT.splitlines()[2])) == 'Оформить подписку можно по кнопке ниже.'
+
+
+def test_unreadable_subscriptions_get_no_buttons_rather_than_buy():
+    assert answer_buttons.renew_buttons('Подписки:\n  • подписка №1 (id=11), статус=active, до 01.10.2026') == []
+    assert answer_buttons.renew_buttons('') == []
+
+
+def test_customer_without_subscriptions_gets_buy():
+    assert answer_buttons.renew_buttons('Баланс: 0 ₽\nПодписки: отсутствуют')[0][0]['text'] == 'Купить подписку'
