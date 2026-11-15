@@ -202,6 +202,9 @@ async def run(args) -> None:
         print(f'Эскалация: {result["escalate"]}; RAG-примеров: {result["knowledge_used"]}; '
               f'запросов к модели: {metrics["calls"] - previous_calls}; '
               f'источник: {result.get("answer_source", "model")}', flush=True)
+        if result.get('buttons'):
+            print('Кнопки: ' + ', '.join(f'{b["text"]} [{b.get("style", "—")}] {b["url"].split("?")[0][:40]}'
+                                          for row in result['buttons'] for b in row), flush=True)
         tools = metrics['tools'][previous_tools:]
         if tools:
             print('Инструменты: ' + ', '.join(tools), flush=True)

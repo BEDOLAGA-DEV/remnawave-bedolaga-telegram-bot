@@ -137,6 +137,30 @@ async def test_marker_at_end_triggers_escalation_and_is_stripped(flow):
 
 
 @pytest.mark.asyncio
+async def test_buttons_marker_becomes_buttons_and_leaves_the_text(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = '🔑 Ссылку подписки откройте по кнопке ниже.\n[[BUTTONS: connect, bot]]'
+
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'нужна ручная проверка моего тарифа')
+
+    assert '[[BUTTONS' not in result['answer']
+    assert [row[0]['text'] for row in result['buttons']] == ['Подключить устройство', 'Открыть бота']
+
+
+@pytest.mark.asyncio
+async def test_handoff_answer_gets_no_buttons(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = f'Уточняю этот вопрос.\n[[BUTTONS: renew]]\n{ESCALATION_MARKER}'
+
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'нужна ручная проверка моего тарифа')
+
+    assert result['escalate'] is True
+    assert result['buttons'] == []
+
+
+@pytest.mark.asyncio
 async def test_marker_in_the_middle_does_not_trigger_escalation(flow):
     captured, agent_mod, Session = flow
     captured['reply'] = f'Напиши {ESCALATION_MARKER} в тексте — вот и всё, вопрос решён.'

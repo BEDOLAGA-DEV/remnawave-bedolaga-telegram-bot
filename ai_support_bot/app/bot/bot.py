@@ -329,15 +329,19 @@ async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = 
     return delivered > 0
 
 
-async def _answer_safely(message: Message, text: str) -> bool:
+async def _answer_safely(message: Message, text: str, buttons: list[list[dict]] | None = None) -> bool:
     if not await _turn_active():
         return False
+    # aiogram passes the unknown «style» field (button colour) through to Telegram as is.
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(**button) for button in row] for row in buttons
+    ]) if buttons else None
     try:
-        await message.answer(text, parse_mode='HTML')
+        await message.answer(text, parse_mode='HTML', **({'reply_markup': markup} if markup else {}))
     except TelegramBadRequest as error:
-        # Premium emoji are allowed only in the bot's own chats; on behalf of a business
-        # account Telegram may refuse them, so the plain fallback characters go instead.
-        if '<tg-emoji' in text and 'parse entities' not in str(error).lower():
+        # Premium emoji and coloured buttons are not allowed everywhere; on a refusal the
+        # answer goes with plain emoji and without buttons rather than not at all.
+        if ('<tg-emoji' in text or markup) and 'parse entities' not in str(error).lower():
             if not await _turn_active():
                 return False
             await message.answer(unwrap(text), parse_mode='HTML')
@@ -502,7 +506,7 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
 
     answer = result['answer'] or 'Не удалось сформировать ответ.'
 
-    if await _answer_safely(message, answer) is False:
+    if await _answer_safely(message, answer, result.get('buttons')) is False:
         logger.info('AI answer suppressed: operator took over', chat_id=message.chat.id)
         return
 

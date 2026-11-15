@@ -12,7 +12,7 @@ from ai_support_bot.app.core.config import DEFAULT_SYSTEM_PROMPT, ESCALATION_MAR
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.navigation import tool as navigation_tool
 from ai_support_bot.app.navigation.query import contextual_navigation_query, is_context_followup
-from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services import answer_buttons, settings_store
 from ai_support_bot.app.services.account_support import wheel_reward_answer
 from ai_support_bot.app.services.dialogue_tools import (
     SUPPORT_TOOLS,
@@ -648,6 +648,7 @@ class SupportAgent:
             if cache_key and answer_text and not result.get('tools_used'):
                 _response_cache.set(cache_key, answer_text)
 
+        answer_text, button_actions = answer_buttons.extract(answer_text)
         escalate = has_escalation_marker(answer_text)
         if not forced_reason and support_state.get('_store_help'):
             answer_text, escalate = APP_STORE_REGION_HELP, False
@@ -726,6 +727,12 @@ class SupportAgent:
                        or support_state.get('issue') in {'payment_missing', 'payment_activation'})
         lead = '🎧' if escalate else _LEAD_EMOJI.get(direct_kind) if model_used == 'rules' else None
         answer_text = decorate(answer_text, lead=lead, plain=serious)
+        if serious or escalate:
+            button_actions = []
+        elif model_used == 'rules':
+            button_actions = {'apps': ['connect'], 'wheel': ['wheel']}.get(direct_kind) or (
+                answer_buttons.page_actions(answer_text) if direct_kind == 'navigation' else [])
+        buttons = answer_buttons.build(button_actions, user_context)
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,
@@ -784,6 +791,7 @@ class SupportAgent:
             'answer_source': 'rules' if model_used == 'rules' else 'model',
             'support_photo': support_photo,
             'support_photos': support_photos,
+            'buttons': buttons,
         }
 
 

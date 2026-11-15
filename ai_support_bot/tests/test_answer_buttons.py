@@ -1,0 +1,75 @@
+from unittest.mock import AsyncMock
+
+import pytest
+
+from ai_support_bot.app.services import answer_buttons
+from ai_support_bot.app.services.answer_buttons import SITE, build, extract, page_actions
+
+ONE_SUBSCRIPTION = '  • подписка №1 (id=57923), статус=active, ссылка=https://connect.sligvpn.ru/AbC123'
+TWO_SUBSCRIPTIONS = ONE_SUBSCRIPTION + '\n  • подписка №2 (id=60001), статус=active, ссылка=https://connect.sligvpn.ru/XyZ789'
+
+
+def test_marker_is_removed_and_known_actions_kept_in_order():
+    text, actions = extract('Продлить можно в кабинете.\n[[BUTTONS: renew, bot, renew, hack]]')
+
+    assert text == 'Продлить можно в кабинете.'
+    assert actions == ['renew', 'bot']
+
+
+def test_marker_before_escalation_marker_keeps_it_last():
+    text, actions = extract('Передаю команде.\n[[BUTTONS: bot]]\n[[ESCALATE]]')
+
+    assert text.endswith('[[ESCALATE]]')
+    assert actions == ['bot']
+
+
+def test_personal_link_and_subscription_pages_come_from_customer_data():
+    rows = build(['subscription', 'renew'], ONE_SUBSCRIPTION)
+
+    assert rows == [
+        [{'text': 'Моя подписка', 'url': 'https://connect.sligvpn.ru/AbC123', 'style': 'primary'}],
+        [{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/57923/renew', 'style': 'success'}],
+    ]
+
+
+def test_several_subscriptions_lead_to_the_list_not_to_a_guess():
+    rows = build(['subscription', 'renew'], TWO_SUBSCRIPTIONS)
+
+    assert [row[0]['url'] for row in rows] == [f'{SITE}/subscriptions', f'{SITE}/subscriptions']
+
+
+def test_at_most_two_buttons_and_bot_button_has_no_colour():
+    rows = build(['topup', 'buy', 'bot'])
+
+    assert len(rows) == 2
+    assert build(['bot']) == [[{'text': 'Открыть бота', 'url': 'https://t.me/SligVPN_bot?start=ai_support'}]]
+
+
+def test_foreign_subscription_host_is_never_shown(monkeypatch):
+    monkeypatch.setattr(answer_buttons, 'is_allowed_link', lambda url: 'evil' not in url)
+
+    assert build(['subscription'], 'подписка №1 (id=1), ссылка=https://evil.example/x') == []
+
+
+def test_rule_answers_offer_the_page_they_name():
+    assert page_actions('На сайте: https://web.slig.app/balance/top-up\nПуть: Баланс') == ['topup']
+    assert page_actions('Откройте https://web.slig.app/subscription/purchase') == ['buy']
+    assert page_actions('Откройте https://web.slig.app/subscriptions') == []
+
+
+@pytest.mark.asyncio
+async def test_buttons_are_sent_with_colour_and_dropped_on_refusal(monkeypatch):
+    from aiogram.exceptions import TelegramBadRequest
+
+    from ai_support_bot.app.bot import bot as bot_mod
+
+    monkeypatch.setattr(bot_mod, '_turn_active', AsyncMock(return_value=True))
+    message = AsyncMock()
+    assert await bot_mod._answer_safely(message, 'Ответ', build(['renew'], ONE_SUBSCRIPTION))
+    markup = message.answer.await_args.kwargs['reply_markup']
+    assert markup.model_dump(exclude_none=True)['inline_keyboard'][0][0]['style'] == 'success'
+
+    message = AsyncMock()
+    message.answer.side_effect = [TelegramBadRequest(method=None, message='Bad Request: BUTTON_STYLE_INVALID'), None]
+    assert await bot_mod._answer_safely(message, 'Ответ', build(['renew']))
+    assert 'reply_markup' not in message.answer.await_args_list[1].kwargs
