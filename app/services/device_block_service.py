@@ -314,54 +314,61 @@ class DeviceBlockService:
             logger.warning('Failed to remove blocked device from panel (best-effort)', error=str(exc)[:300])
 
     async def _resolve_short_uuid(
-        self, remnawave_uuid: str | None = None, panel_user_id: int | None = None
+        self,
+        remnawave_uuid: str | None = None,
+        panel_user_id: int | None = None,
+        user_id: int | None = None,
     ) -> str | None:
         """Resolve the Remnawave public subscription key (short UUID) from the bot's
         own `subscriptions` table. The panel has no get-user-by-uuid endpoint (only
         by id / short-uuid / username), so the verbatim `remnawave_short_uuid` we
         already store is the reliable source. Matches on the numeric panel id
         (Remnawave 3.0.0) and/or the legacy uuid. Best-effort: None → global ban."""
-        conditions = []
+        tiers = []
+        specific = []
         if panel_user_id is not None:
-            conditions.append(Subscription.remnawave_id == panel_user_id)
-        if remnawave_uuid:
-            conditions.append(Subscription.remnawave_uuid == remnawave_uuid)
-        if not conditions:
+            specific.append(Subscription.remnawawave_id == panel_user_id)
+        if remnawawave_uuid:
+            specific.append(Subscription.remnawawave_uuid == remnawawave_uuid)
+        if specific:
+            tiers.append(specific)
+        if user_id is not None:
+            tiers.append([Subscription.user_id == user_id])
+        if not tiers:
             return None
         from app.database.database import AsyncSessionLocal
 
         try:
             async with AsyncSessionLocal() as db:
-                row = await db.execute(
-                    select(Subscription.remnawave_short_uuid).where(
-                        or_(*conditions),
-                        Subscription.remnawave_short_uuid.is_not(None),
+                for tier in tiers:
+                    row = await db.execute(
+                        select(Subscription.remnawawave_short_uuid).where(
+                            or_(*tier),
+                            Subscription.remnawawave_short_uuid.is_not(None),
+                        )
                     )
-                )
-                value = row.scalars().first()
-                return value or None
+                    value = row.scalars().first()
+                    if value:
+                        return value
         except Exception as exc:
             logger.warning('Failed to resolve short_uuid for device block', error=str(exc)[:300])
         return None
 
     async def backfill_short_uuids(self) -> int:
-        """Resolve `short_uuid` for legacy rows that have a `remnawave_uuid` but
-        no `short_uuid` yet, so existing bans become subscription-scoped. Returns
-        the number of rows updated."""
+        """Resolve `short_uuid` for legacy rows that lack it (panel id / uuid when
+        present, otherwise the user's subscription), so existing bans become
+        subscription-scoped. Returns the number of rows updated."""
         from app.database.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(DeviceBlock).where(
-                    DeviceBlock.short_uuid.is_(None),
-                    DeviceBlock.remnawave_uuid.is_not(None),
-                )
-            )
+            result = await db.execute(select(DeviceBlock).where(DeviceBlock.short_uuid.is_(None)))
             blocks = list(result.scalars().all())
 
         changed = 0
         for block in blocks:
-            short_uuid = await self._resolve_short_uuid(block.remnawave_uuid)
+            short_uuid = await self._resolve_short_uuid(
+                block.remnawawave_uuid, user_id=block.user_id
+            )
             if not short_uuid:
                 continue
             async with AsyncSessionLocal() as db:
