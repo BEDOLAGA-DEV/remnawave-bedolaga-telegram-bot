@@ -715,6 +715,8 @@ def neutral_self_reference(text: str) -> str:
     stop = r'(?=[ \t]*(?:[.,!:;—–)]|$))'
     apply(r'понял(?:а)?(?:[ \t]+вас)?' + stop, lambda m, up: _cap('понятно', up))
     apply(r'рад(?:а)?,[ \t]+что\b', lambda m, up: _cap('хорошо, что', up))
+    # «Отлично, рад, что заработало»: after a comma the pronoun is usually dropped.
+    text = re.sub(r'(?<=[,;:—–])([ \t]+)(?:очень[ \t]+)?рад(?:а)?(?=,[ \t]+что\b)', r'\1хорошо', text, flags=re.IGNORECASE)
     apply(r'рад(?:а)?[ \t]+(?:это[ \t]+)?слышать', lambda m, up: _cap('отлично', up))
     apply(r'(?:проверил|посмотрел)(?:а)?' + r'(?=[ \t]*[:—–])', lambda m, up: _cap('проверка показала', up))
     apply(r'(?:проверил|посмотрел)(?:а)?[ \t]+(по[ \t]+(?:вашему[ \t]+)?(?:аккаунту|данным))(?=[ \t]*[:—–])',

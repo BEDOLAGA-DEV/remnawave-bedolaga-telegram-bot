@@ -386,3 +386,40 @@ async def test_live_devices_and_unwanted_renewal_dialogue(flow):
     assert follow['escalation_reason'] == 'unwanted_renewal'
     assert not captured['prompts']
 
+
+# 6. «Отлично, рад, что заработало» kept the gendered «рад».
+
+@pytest.mark.parametrize(('text', 'expected'), [
+    ('✅ Отлично, рад, что заработало.', '✅ Отлично, хорошо, что заработало.'),
+    ('Отлично, рада, что всё работает!', 'Отлично, хорошо, что всё работает!'),
+    ('Супер, очень рад, что помогло.', 'Супер, хорошо, что помогло.'),
+])
+def test_glad_after_a_comma_is_neutralised(text, expected):
+    assert neutral_self_reference(text) == expected
+
+
+@pytest.mark.parametrize('text', [
+    'Включите радио, что-то слышно?',
+    'Мы рады, что вы с нами.',
+    'Отлично, рады видеть вас снова.',
+    'Отлично, радиус покрытия большой.',
+    'Отлично, радостно, что заработало.',
+])
+def test_other_glad_words_are_left_alone(text):
+    assert neutral_self_reference(text) == text
+
+
+# 7. The owner's facts.
+
+def test_policy_has_partner_and_guarantee_facts_and_keeps_the_closing_line_last():
+    assert 'Партнёрская программа: заявки рассматриваем в течение 3 часов в будни, в выходные может быть дольше.' in SUPPORT_POLICY
+    guarantee = next(line for line in SUPPORT_POLICY.splitlines() if line.startswith('Гарантия:'))
+    assert 'да, гарантия есть' in guarantee and 'годовую подписку' in guarantee
+    assert 'https://web.slig.app/offer' in guarantee and is_allowed_link('https://web.slig.app/offer')
+    assert 'Не обещай автоматический возврат' in guarantee
+    assert SUPPORT_POLICY.strip().splitlines()[-1].startswith('Отвечай кратко')
+
+
+@pytest.mark.parametrize('question', ['Есть ли гарантия?', 'А на годовую подписку есть гарантия?'])
+def test_guarantee_question_is_answered_not_handed_over(question):
+    assert mandatory_handoff(question, []) is None
