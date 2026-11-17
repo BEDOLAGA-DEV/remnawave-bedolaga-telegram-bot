@@ -33,6 +33,7 @@ from ai_support_bot.app.services.response_rules import (
     NOTICE,
     SUPPORT_SCOPE_ANSWER,
     apps_answer,
+    blank_page_answer,
     boundary_answer,
     cannot_provide_payment_details,
     compact_knowledge,
@@ -51,12 +52,14 @@ from ai_support_bot.app.services.response_rules import (
     neutral_self_reference,
     paid_access_request,
     payment_next_step,
+    region_help_given,
     repeated_answer,
     repeated_clarification,
     repeated_diagnostics,
     smalltalk_answer,
     starts_new_topic,
     starts_technical_issue,
+    store_alternatives_answer,
     subscription_restricted,
     topic_switch_question,
     unsupported_price,
@@ -85,7 +88,7 @@ _ESCALATION_MARKER = ESCALATION_MARKER
 # Disputes, refunds, cancellations and payment checks keep a plain tone: no emoji at all.
 _SERIOUS_REASONS = {
     'unrecognized_charge', 'subscription_cancellation', 'subscription_restricted', 'payment_review',
-    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff',
+    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff', 'unwanted_renewal',
 }
 # Never under a cancellation, refund or disputed charge.
 _PAYMENT_BUTTONS = {'renew', 'buy', 'topup'}
@@ -107,6 +110,18 @@ def _payment_claimed(evidence: str) -> bool:
     if not _PAYMENT_CLAIM.search(evidence):
         return False
     return bool(_PAYMENT_STRONG.search(evidence)) or not _TECH_COMPLAINT.search(evidence)
+
+
+# «Нет выбора страны» is about the server list in the VPN app, not the App Store region.
+_STORE_CLAIM = re.compile(
+    r'app\s*store|ап+\s*стор|эп+\s*стор|apple\s*(?:id|account)|эпл\s*айди|магазин|скача|установ'
+    r'|(?<![а-яё])(?:по)?став(?:ить|ится|ятся|лю)|не\s+(?:нахож|наход|могу\s+найти)|смен\w*\s+регион',
+    re.IGNORECASE,
+)
+
+
+def _store_claimed(evidence: str) -> bool:
+    return bool(_STORE_CLAIM.search(evidence))
 
 
 _SMALLTALK_PATTERNS = (
@@ -282,6 +297,10 @@ class SupportAgent:
                 elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and not with_image:
                     # Payment checks set sticky payment flags; «не работает» or «лимит увеличил» must not start them.
                     output = {'error': 'Клиент не сообщал об оплате: не проверяй оплату, ответь на его вопрос по данным аккаунта.'}
+                elif function.get('name') == 'app_store_region_help' and not _store_claimed(evidence) and not with_image:
+                    output = {'error': 'Клиент не писал про App Store или установку приложения. «Нет выбора страны» — '
+                                       'это список серверов в VPN-приложении: подскажи обновить подписку в приложении '
+                                       'или заново добавить ссылку подписки.'}
                 else:
                     output = await execute_support_tool(
                         function.get('name', ''), function.get('arguments', ''), telegram_id, state, evidence,
@@ -495,8 +514,10 @@ class SupportAgent:
             elif recovery_reason:
                 forced_reason = recovery_reason
         scope_answer = boundary_answer(question)
-        direct_answer = (None if forced_reason else scope_answer) or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
-        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'apps'
+        # «Белый экран» after a renew button is a page that did not load, not a VPN failure.
+        page_answer = None if forced_reason else blank_page_answer(question, history)
+        direct_answer = (None if forced_reason else scope_answer) or page_answer or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
+        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'navigation' if direct_answer == page_answer else 'apps'
         if direct_answer and support_state.get('issue') == 'payment_activation':
             support_state = {'issue': 'other'}
         if not forced_reason and wheel_reward_request(question, history, support_state):
@@ -546,7 +567,7 @@ class SupportAgent:
             support_state = {'issue': 'other'}
         if recovery_answer:
             support_state['diagnostics'] = recovery_state['diagnostics']
-        if forced_reason in {'subscription_cancellation', 'unrecognized_charge'}:
+        if forced_reason in {'subscription_cancellation', 'unrecognized_charge', 'unwanted_renewal'}:
             support_state['manual_review_reason'] = forced_reason
         if support_state.get('issue') in {'payment_missing', 'payment_activation'}:
             capture_payment_details(question, support_state)
@@ -695,7 +716,9 @@ class SupportAgent:
         answer_text, button_actions = answer_buttons.extract(answer_text)
         escalate = has_escalation_marker(answer_text)
         if not forced_reason and support_state.get('_store_help'):
-            answer_text, escalate = APP_STORE_REGION_HELP, False
+            # The region instructions go once; a second call gets the other clients instead of a copy.
+            answer_text = store_alternatives_answer(question) if region_help_given(history) else APP_STORE_REGION_HELP
+            escalate = False
             support_state['issue'] = 'other'
         if not forced_reason and not smalltalk and support_state.get('issue') == 'wheel_reward' and '_wheel_result' not in support_state:
             await execute_support_tool('recover_wheel_rewards', '{}', telegram_id, support_state, question)

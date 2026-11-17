@@ -493,3 +493,24 @@ def test_payment_tools_need_a_payment_claim(evidence, claimed):
     from ai_support_bot.app.services.agent import _payment_claimed
 
     assert _payment_claimed(evidence) is claimed
+
+
+@pytest.mark.parametrize(
+    ('evidence', 'claimed'),
+    [
+        ('нет выбора страны', False),
+        ('В приложении нет выбора страны, помогите', False),
+        ('Телеграм не работает, потому что нет впн', False),
+        ('Айфон, Incy не находится в App Store', True),
+        ('Помогаю коллегам поставить, но инси и хапп не доступны в эпстор в рф', True),
+        ('не могу скачать приложение на ios', True),
+        ('Айфон приложение incy как установить', True),
+        ('Как сменить регион Apple ID?', True),
+        ('Не ставится приложение на айфон, что делать', True),
+        ('Можно оставить заявку?', False),
+    ],
+)
+def test_store_help_needs_a_store_claim(evidence, claimed):
+    from ai_support_bot.app.services.agent import _store_claimed
+
+    assert _store_claimed(evidence) is claimed

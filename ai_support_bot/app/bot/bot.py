@@ -545,6 +545,7 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             'subscription_restricted': 'сообщение об ограничении или блокировке подписки',
             'subscription_cancellation': 'запрос на отмену подписки или автоматических списаний',
             'unrecognized_charge': 'пользователь сообщает о незнакомых списаниях без подключения услуги',
+            'unwanted_renewal': 'нежеланное автопродление или списание: проверка и, возможно, возврат',
             'diagnostics_failed': 'диагностика не помогла, требуется ручная проверка',
             'wheel_reward_review': 'не удалось подтвердить доступный личный промокод из колеса',
             'payment_review': 'требуется ручная проверка оплаты и доступа по подписке',

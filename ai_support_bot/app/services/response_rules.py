@@ -15,9 +15,10 @@ from ai_support_bot.app.services.service_identity import renewal_payment_request
 
 NOTICE = 'Передаю обращение команде для проверки, подождите, пожалуйста.'
 SUPPORT_SCOPE_ANSWER = 'Я помогаю с SligVPN: подключением, подписками, оплатой и настройкой VPN-клиентов. Напишите, какой вопрос по сервису нужно решить.'
+# Shadowrocket is left out on purpose: it does not send the HWID the device limit relies on (not told to customers).
 CLIENTS = {
     'Android': ('Incy', 'Happ', 'V2RayNG'),
-    'iPhone/iPad': ('Incy', 'Happ', 'Shadowrocket', 'Streisand'),
+    'iPhone/iPad': ('Incy', 'Happ', 'Streisand'),
     'Windows': ('Incy', 'Happ', 'v2rayN'),
     'macOS': ('Incy', 'Happ', 'V2Box'),
 }
@@ -222,6 +223,44 @@ def account_transfer_request(question: str) -> bool:
     return bool(hacked or transfer or lost)
 
 
+_AUTO_RENEWAL = r'автопродл\w*|автоплат\w*|автосписан\w*|авто\s*-?\s*(?:продл|плат|списан)\w*|продлил\w*|продлен\w*|продлён\w*'
+_UNWANTED = (
+    r'не\s+(?:нужн\w*|нужен|просил\w*|хотел\w*|включал\w*|заказывал\w*|планировал\w*|собирал\w*)'
+    r'|без\s+(?:моего\s+)?(?:спроса|согласия|запроса|предупреждени\w*)'
+)
+# The charge already happened: «пришло», «списали», «10₽»; «чтобы не списали» is only a wish.
+_HAPPENED = r'(?<!не\s)(?<!бы\s)\b(?:спис\w*|снял\w*|сняли|снят\w*|пришл\w*|продлил\w*|продлен\w*|продлён\w*)|\d\s*(?:₽|р\b|руб)'
+
+
+def unwanted_renewal(question: str) -> bool:
+    """«10₽ пришло автопродление, хотя мне не нужно»: a renewal the customer did not want is a money dispute.
+
+    «Мне не нужно автопродление, как отключить?» has no charge yet and stays self-service.
+    """
+    text = question.casefold()
+    return bool(re.search(_AUTO_RENEWAL + '|' + _CHARGE, text) and re.search(_UNWANTED, text) and re.search(_HAPPENED, text))
+
+
+_DEVICES_EXCEEDED = re.compile(
+    r'(?:превыш\w*|макс\w*\.?|достигнут\w*)\s+(?:[\w.-]+\s+){0,3}?устройств|устройств\w*\s+(?:[\w-]+\s+){0,2}?(?:превыш|достигнут)\w*'
+)
+DEVICES_EXCEEDED_HELP = (
+    'Ошибка «превышено число устройств» значит, что все места подписки заняты. Удалите старое устройство: '
+    'в боте — ГЛАВНОЕ МЕНЮ → Мои подписки → выберите подписку → Устройства → Управление устройствами; '
+    'на сайте — https://web.slig.app/subscriptions → подписка → Мои устройства. Затем снова нажмите подключение в приложении.'
+)
+AUTOPAY_OFF_HELP = (
+    'Чтобы следующего списания не было, выключите автоплатёж: в боте https://t.me/SligVPN_bot — Мои подписки → '
+    'выберите подписку → Автоплатеж → Выключить; на сайте https://web.slig.app/subscriptions — переключатель '
+    '«Автопродление» на карточке подписки.'
+)
+
+
+def devices_exceeded(question: str) -> bool:
+    """«Макс. число устройств превышено», «пишет максимальное количество устройств»: every place is taken."""
+    return bool(_DEVICES_EXCEEDED.search(question.casefold()))
+
+
 def money_handoff(question: str) -> str | None:
     """Double payment, a wrong tariff or an account transfer always go to the team with their own reason."""
     text = question.casefold()
@@ -240,6 +279,7 @@ def money_dispute_topic(question: str) -> bool:
     text = question.casefold()
     return bool(
         _REFUND.search(text) or money_handoff(question) or cancellation_request(question) or account_transfer_request(question)
+        or unwanted_renewal(question)
         or re.search(r'возврат|отмен\w*|отпис\w*|(?:отключ|выключ|убр)\w*\s+(?:[\w-]+\s+)?(?:авто\w*|подписк|списан)|спорн\w*|чарджб'
                      r'|спис(?:ал|ан|ыв)\w*|(?:деньг|денег|средств|руб|₽).{0,40}(?:снял|сняли|снят|снима)'
                      r'|(?:снял\w*|сняли|снят\w*|снима\w*).{0,40}(?:деньг|денег|средств|руб|₽|карт)', text)
@@ -304,6 +344,8 @@ def mandatory_handoff(question: str, history: list) -> str | None:
         and (re.search(charge_pattern, text) or re.search(denial_pattern, text) or manual_review_followup(question))
     ):
         return 'unrecognized_charge'
+    if unwanted_renewal(question):
+        return 'unwanted_renewal'
     if reason := money_handoff(question):
         return reason
     if cancellation_request(question) or (manual_review_followup(question) and cancellation_request(recent_user)):
@@ -481,31 +523,109 @@ def handoff_answer(reason: str, question: str) -> str:
         return 'Передаю обращение о незнакомых списаниях команде для ручной проверки и запроса на отключение. Отмена и возврат пока не подтверждены.'
     if not re.search(r'[а-яё]', question, re.IGNORECASE):
         return 'I am passing your request to the support team for review. Please wait.'
+    if reason == 'unwanted_renewal':
+        # The devices question from the same message is self-service: it should not wait for the team.
+        devices = '\n\n' + DEVICES_EXCEEDED_HELP if devices_exceeded(question) else ''
+        return 'Передаю обращение о списании за автопродление команде для проверки. Возврат пока не подтверждён.\n\n' + AUTOPAY_OFF_HELP + devices
     return NOTICE
+
+
+_STORE = r'app\s*store|апп?\s*стор|аппстор|эпп\s*стор'
+_APP_NAME = r'happ|incy|хапп|хэпп|инси'
+_PLATFORMS = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов', 'macOS': r'macos|макбук|mac\b'}
+# The approved instructions contain this phrase: its copy in the history means they were already sent.
+_REGION_HELP_MARK = 'сменить регион Apple Account'
+_SHADOWROCKET = re.compile(r'shadow\s*rocket|ш[аэ]д[оа]у?\s*рокет', re.IGNORECASE)
+SHADOWROCKET_ANSWER = (
+    'Для подключения используйте Happ или Incy. Если на iPhone их не получается установить без смены региона Apple ID, '
+    'подойдёт Streisand. Затем добавьте в приложение ссылку своей подписки.'
+)
+
+
+def region_help_given(history: list) -> bool:
+    return any(item.role == 'assistant' and _REGION_HELP_MARK in (getattr(item, 'content', '') or '') for item in history)
+
+
+def region_change_refused(question: str, history: list) -> bool:
+    """«Не хочу менять регион», «деньги на балансе Apple ID», «семейный доступ»: the region change is not an option."""
+    text = question.casefold()
+    change = re.search(
+        r'не\s+(?:хочу|могу|получается|получилось|выходит|вышло|удаётся|удается|удалось|буду|стану)\s+(?:[\w-]+\s+){0,2}?(?:меня(?:ть|ю|ем)|смен|поменя|измен)\w*'
+        r'|регион\w*\s+(?:[\w-]+\s+)?не\s+(?:меня|смен|поменя|измен)\w*', text)
+    obstacle = re.search(r'(?:деньг|денег|средств|остат|баланс)\w*\s+(?:[\w-]+\s+){0,2}?(?:apple|эпл)|семейн\w*\s+доступ|подписк\w*\s+(?:в\s+)?(?:apple|эпл)', text)
+    region = re.search(r'регион|apple|эпл|' + _STORE, text) or region_help_given(history)
+    return bool((change or obstacle) and region)
+
+
+def store_alternatives_answer(question: str = '') -> str:
+    """Instead of a second copy of the region instructions: the other clients of the platform, iPhone by default."""
+    platform = next((name for name, pattern in _PLATFORMS.items() if re.search(pattern, question.casefold())), 'iPhone/iPad')
+    apps = ', '.join(name for name in CLIENTS[platform] if name not in {'Incy', 'Happ'})
+    if platform == 'iPhone/iPad':
+        return (f'Если регион Apple ID сменить не получается или не хочется, установите {apps}: его можно скачать '
+                'без смены региона. Затем добавьте в него ссылку своей подписки.')
+    return f'{platform}: можно установить {apps} и добавить в него ссылку своей подписки.'
 
 
 def apps_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
-    store_context = bool(re.search(r'app\s*store|апп\s*стор|апстор|эпп\s*стор|iphone|ipad|ios|айфон|айпад', text + ' ' + previous))
+    if _SHADOWROCKET.search(text) and re.search(r'не\s|ошибк|поддерж|можно|подойд|подход|работа|подключ|\?', text):
+        return SHADOWROCKET_ANSWER
+    store_context = bool(re.search(_STORE + r'|iphone|ipad|ios|айфон|айпад', text + ' ' + previous))
+    app_word = r'\b(?:' + _APP_NAME + r')\b|приложени\w*|(?:' + _STORE + r')\w*'
+    # «Нет» counts only next to the app or the store: «телеграм не работает, потому что нет впн» is not about the store.
+    absent = bool(re.search(r'нету?\s+(?:ни\s+)?(?:[\w-]+\s+)?(?:в\s+)?(?:' + app_word + r')|(?:' + app_word + r')\s+(?:[\w-]+\s+){0,2}?нету?\b', text)) and not re.search(
+        r'не\s+(?:работа|подключ|открыва|грузит|загружа)', text)
     missing = (
         bool(re.search(r'\b(?:happ|incy)\b', text + ' ' + previous))
-        and bool(re.search(r'нет|недоступ|не (?:найти|вижу|отображ|доступ|могу (?:скачать|установить|найти))|не (?:скачива|устанавлива|наход)|не получается (?:скачать|установить|найти)', text))
+        and bool(re.search(app_word + r'|скач|установ', text))
+        and (absent or bool(re.search(r'недоступ|не (?:найти|вижу|отображ|доступ|могу (?:скачать|установить|найти))|не (?:скачива|устанавлива|наход)|не получается (?:скачать|установить|найти)', text)))
         and store_context
     )
+    refused = region_change_refused(question, history)
     app_request = bool(re.search(r'каки\w* приложени|како\w* (?:приложени|клиент)|что скачать|приложени\w* скачать', text))
     followup = bool(re.match(r'^а (?:для|на)\b', text)) and bool(re.search(r'каки\w* приложени|incy|shadowrocket|v2rayng', previous))
-    if not (app_request or followup or missing):
+    if not (app_request or followup or missing or refused):
         return None
+    # The region instructions go once: a refusal or a second «нет в App Store» gets the other clients.
+    if refused or (missing and region_help_given(history)):
+        return store_alternatives_answer(question)
     if missing:
         prefix = (
             'Для подключения этой VPN-подписки на iPhone нужен VPN-клиент. Веб-кабинет не заменяет приложение.\n\n'
             if re.search(r'без приложени|веб.?верси|web.?верси', text) else ''
         )
         return prefix + APP_STORE_REGION_HELP
-    patterns = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов', 'macOS': r'macos|макбук|mac\b'}
-    platforms = [platform for platform, pattern in patterns.items() if re.search(pattern, text)] or list(CLIENTS)
+    platforms = [platform for platform, pattern in _PLATFORMS.items() if re.search(pattern, text)] or list(CLIENTS)
     return '\n'.join(f'{platform}: {", ".join(CLIENTS[platform])}.' for platform in platforms)
+
+
+_BLANK_PAGE = re.compile(r'бел\w*\s+(?:экран|страниц|лист)|пуст\w*\s+(?:экран|страниц)')
+_PAGE_FAILED = re.compile(
+    r'не\s+(?:откр|загружа|грузит|отвеча|нажима|переход)\w*|ничего\s+не\s+(?:происход|открыва|грузит)\w*'
+    r'|(?:кнопк|ссылк|страниц)\w*\s+(?:[\w-]+\s+)?не\s+работа\w*|не\s+работа\w*\s+(?:кнопк|ссылк|страниц)'
+)
+# «Не открывается сайт / телеграм / приложение» stays a VPN case even right after a button.
+_VPN_TARGET = re.compile(r'vpn|впн|сервер|telegram|телеграм|\bтг\b|ютуб|youtube|инстаграм|instagram|сайт|интернет|прилож')
+_CLIENT_APP = re.compile(r'\b(?:happ|incy|хапп|хэпп|инси|v2ray\w*|streisand|v2box)\b')
+
+
+def blank_page_answer(question: str, history: list) -> str | None:
+    """«Белый экран» or «не открывается» after a button or a cabinet link: the page did not load, not a VPN failure."""
+    text = question.casefold()
+    previous = next((getattr(item, 'content', '') or '' for item in reversed(history) if item.role == 'assistant'), '')
+    after_link = bool(re.search(r'кнопк|web\.slig\.app', previous, re.IGNORECASE))
+    blank = bool(_BLANK_PAGE.search(text)) and not _CLIENT_APP.search(text) and (after_link or not _VPN_TARGET.search(text))
+    failed = after_link and len(text) <= 80 and bool(_PAGE_FAILED.search(text)) and not _VPN_TARGET.search(text) and not _CLIENT_APP.search(text)
+    if not (blank or failed):
+        return None
+    renew = ' → Продлить' if re.search(r'продл', previous, re.IGNORECASE) or re.search(r'продл', text) else ''
+    return (
+        'Похоже, страница не загрузилась. Откройте https://web.slig.app в обычном браузере (Safari или Chrome) '
+        'и войдите через Telegram или по email.\n\n'
+        f'Или сделайте то же в боте https://t.me/SligVPN_bot: Мои подписки → выберите подписку{renew}.'
+    )
 
 
 def wheel_reward_request(question: str, history: list, state: dict) -> bool:
@@ -595,6 +715,8 @@ def neutral_self_reference(text: str) -> str:
     stop = r'(?=[ \t]*(?:[.,!:;—–)]|$))'
     apply(r'понял(?:а)?(?:[ \t]+вас)?' + stop, lambda m, up: _cap('понятно', up))
     apply(r'рад(?:а)?,[ \t]+что\b', lambda m, up: _cap('хорошо, что', up))
+    # «Отлично, рад, что заработало»: after a comma the pronoun is usually dropped.
+    text = re.sub(r'(?<=[,;:—–])([ \t]+)(?:очень[ \t]+)?рад(?:а)?(?=,[ \t]+что\b)', r'\1хорошо', text, flags=re.IGNORECASE)
     apply(r'рад(?:а)?[ \t]+(?:это[ \t]+)?слышать', lambda m, up: _cap('отлично', up))
     apply(r'(?:проверил|посмотрел)(?:а)?' + r'(?=[ \t]*[:—–])', lambda m, up: _cap('проверка показала', up))
     apply(r'(?:проверил|посмотрел)(?:а)?[ \t]+(по[ \t]+(?:вашему[ \t]+)?(?:аккаунту|данным))(?=[ \t]*[:—–])',
