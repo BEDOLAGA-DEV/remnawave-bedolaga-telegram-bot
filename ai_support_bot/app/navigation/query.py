@@ -83,7 +83,11 @@ def navigation_target(query: str) -> str | None:
         return 'subscription_autopay'
     if re.search(r'продл', text):
         return 'subscription_extend'
-    if re.search(r'куп\w*.*подпис|оформ\w*.*подпис', text):
+    # «Купила подписку, как активировать ключ» is already bought: the next step is connecting it.
+    bought = re.search(r'купил|приобр[её]л|оформил|оплатил', text)
+    if bought and re.search(r'активир|ключ|подключ|установ|что\s+(?:дальше|делать)', text):
+        return 'subscription_connect'
+    if re.search(r'куп\w*.*подпис|оформ\w*.*подпис', text) and not bought:
         return 'subs_buy_subscription'
     if re.search(r'пополн\w*.*баланс', text):
         return 'balance_topup'

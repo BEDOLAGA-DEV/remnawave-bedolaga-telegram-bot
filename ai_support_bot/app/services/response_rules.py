@@ -84,6 +84,35 @@ def topic_switch_question(question: str) -> str | None:
     return remainder if re.match(r'^(?:как|где|почему|что|зачем|како\w*|сколько|vpn|впн)\b', remainder, re.IGNORECASE) else ''
 
 
+# Offers from advertisers, agencies and payment providers. First person only: «какие услуги вы предлагаете» is a customer.
+_PARTNERSHIP = re.compile(
+    r'сотрудничеств|партн[её]рств|амбассадор|предложени\w*\s+(?:о\s+|по\s+)?(?:реклам|размещени)'
+    r'|(?:предлага(?:ю|ем)|предложить|предлагать)\b[^.!?\n]{0,40}(?:услуг|реклам|размещени|трафик|интеграци|баннер)'
+    r'|(?:постав\w*|размест\w*|опубликую)\s+(?:\w+\s+){0,2}баннер|баннер[^.!?\n]{0,60}просмотр'
+    r'|закуп\w*\s+(?:реклам|трафик)|размещени\w*\s+реклам|за\s+1\s?000\s*просмотр|\b(?:cpa|cpm|ftd)\b',
+    re.IGNORECASE,
+)
+
+
+def partnership_offer(question: str) -> bool:
+    text = question or ''
+    return bool(_PARTNERSHIP.search(text)) and not re.search(r'условия реферальн|как.*реферальн', text, re.IGNORECASE)
+
+
+# «По скидке должно выходить 1228, а при оплате 1536»: the price at checkout is the team's to check.
+_PRICE_MISMATCH = re.compile(
+    r'без\s+скидк|скидк\w*\s+не\s+(?:применя|учитыва|работа|сработ|действу|отобража)|не\s+(?:применя|учитыва)\w*\s+скидк'
+    r'|должн\w*\s+(?:выход|быть|стоить|получ)|(?<![а-яё])(?:а|но)\s+при\s+(?:оплат|покупк)'
+    r'|при\s+(?:оплат|покупк)\w*\s+(?:друг|больше|выше|без)|цен\w*\s+(?:другая|выше|больше|не\s+та|не\s+совпада|меня)',
+    re.IGNORECASE,
+)
+
+
+def price_mismatch(question: str) -> bool:
+    text = question or ''
+    return bool(_PRICE_MISMATCH.search(text)) and bool(re.search(r'скидк|цен|сумм|₽|руб|\d+\s*р\b', text, re.IGNORECASE))
+
+
 def starts_unrelated_question(question: str) -> bool:
     return bool(re.match(r'^\s*(?:как|где|почему|зачем|како\w*|сколько)\b', question, re.IGNORECASE)) and not re.search(
         r'плат[её]ж|оплат|попол|деньг|списал|чек|выписк|email|почт|регистр|прислать|отправить|передать|это|там', question, re.IGNORECASE,
@@ -98,7 +127,7 @@ def conversation_topic(question: str) -> str | None:
         return 'vpn'
     if is_payment_missing(question) or re.search(r'воз\w*рат.*(?:денег|средств)|верн\w*.*деньг|оплат|плат[её]ж|списал', text):
         return 'payment'
-    if re.search(r'сотрудничеств|предложени\w*\s+(?:о\s+)?реклам', text):
+    if partnership_offer(question):
         return 'partnership'
     target = navigation_target(question)
     if target:
@@ -365,8 +394,10 @@ def mandatory_handoff(question: str, history: list) -> str | None:
         return 'refund'
     if account_transfer_request(question):
         return 'account_transfer'
-    if re.search(r'сотрудничеств|предложени\w*\s+(?:о\s+)?реклам', text) and not re.search(r'условия реферальн|как.*реферальн', text):
+    if partnership_offer(question):
         return 'partnership'
+    if price_mismatch(question):
+        return 'price_mismatch'
     if re.search(r'списал\w*.*(?:продлен|продлён|продление)', text) and re.search(r'(?:срок|подписк).*не (?:измен|продл)', text):
         return 'payment_dispute'
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()

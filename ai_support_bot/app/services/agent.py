@@ -38,6 +38,7 @@ from ai_support_bot.app.services.response_rules import (
     cannot_provide_payment_details,
     compact_knowledge,
     deduplicate_answer,
+    partnership_offer,
     drop_scope_disclaimer,
     generated_program,
     handoff_answer,
@@ -88,7 +89,7 @@ _ESCALATION_MARKER = ESCALATION_MARKER
 # Disputes, refunds, cancellations and payment checks keep a plain tone: no emoji at all.
 _SERIOUS_REASONS = {
     'unrecognized_charge', 'subscription_cancellation', 'subscription_restricted', 'payment_review',
-    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff', 'unwanted_renewal',
+    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff', 'unwanted_renewal', 'price_mismatch',
 }
 # Never under a cancellation, refund or disputed charge.
 _PAYMENT_BUTTONS = {'renew', 'buy', 'topup'}
@@ -122,6 +123,16 @@ _STORE_CLAIM = re.compile(
 
 def _store_claimed(evidence: str) -> bool:
     return bool(_STORE_CLAIM.search(evidence))
+
+
+# Present tense only: «если не поможет — передам» is a promise, not a handoff.
+_HANDOFF_SAID = re.compile(r'\bпереда(?:ю|[её]м)\b[^.!?\n]{0,60}(?:команд|на\s+проверку|специалист|оператор)', re.IGNORECASE)
+# «Работает только с вай-фай»: VPN works somewhere, so the subscription is alive, maybe on another account.
+_WORKS_SOMEWHERE = re.compile(
+    r'(?<!не\s)работа(?:ет|л|ло|ли)\s+(?:[а-яёa-z]+\s+){0,2}?(?:только\s+)?(?:с|через|на|по|при|когда)\b'
+    r'|только\s+(?:с|через|на|по)\s+(?:вай|wi)',
+    re.IGNORECASE,
+)
 
 
 _SMALLTALK_PATTERNS = (
@@ -255,6 +266,9 @@ def looks_hedged(answer_text: str, question: str, knowledge_used: int) -> bool:
     if not answer_text or knowledge_used:
         return False
     if not _FACTUAL_RE.search(question or ''):
+        return False
+    # «Возможно, оператор ограничивает» is ordinary diagnostics for a VPN failure, not a guessed fact.
+    if _TECH_COMPLAINT.search(question or ''):
         return False
     return bool(_HEDGE_RE.search(answer_text))
 
@@ -715,6 +729,9 @@ class SupportAgent:
 
         answer_text, button_actions = answer_buttons.extract(answer_text)
         escalate = has_escalation_marker(answer_text)
+        # The model told the client «передаю команде» but left out the marker: the team must still get it.
+        if not escalate and _HANDOFF_SAID.search(answer_text or ''):
+            escalate = True
         if not forced_reason and support_state.get('_store_help'):
             # The region instructions go once; a second call gets the other clients instead of a copy.
             answer_text = store_alternatives_answer(question) if region_help_given(history) else APP_STORE_REGION_HELP
@@ -811,7 +828,10 @@ class SupportAgent:
                 answer_text = decorate(answer_buttons.renew_answer(buttons), lead='⏳')
         # The model often skips buttons for prices and devices; the next step is clear, so the code adds it.
         device_action = answer_buttons.device_action(question)
-        price_like = (pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE))) and not money_case
+        price_like = (
+            (pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE)))
+            and not money_case and not partnership_offer(question)
+        )
         if not buttons and not (serious or escalate) and (price_like or device_action):
             context = user_context or await build_user_context(telegram_id)
             if price_like:
@@ -822,7 +842,8 @@ class SupportAgent:
         if not buttons and not (serious or escalate) and answer_buttons.mentions_connect(answer_text):
             buttons = answer_buttons.build(['connect'], user_context)
         # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
-        if not (serious or escalate or renewal_wish or money_case) and (
+        recent_question = ' '.join([item.content or '' for item in history[-2:] if item.role == 'user'] + [question])
+        if not (serious or escalate or renewal_wish or money_case) and not _WORKS_SOMEWHERE.search(recent_question) and (
             starts_technical_issue(question) or re.search(r'не\s+работа|не\s+подключ', question, re.IGNORECASE)
         ):
             context = user_context or await build_user_context(telegram_id)
