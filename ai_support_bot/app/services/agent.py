@@ -112,6 +112,18 @@ def _payment_claimed(evidence: str) -> bool:
     return bool(_PAYMENT_STRONG.search(evidence)) or not _TECH_COMPLAINT.search(evidence)
 
 
+# «Нет выбора страны» is about the server list in the VPN app, not the App Store region.
+_STORE_CLAIM = re.compile(
+    r'app\s*store|ап+\s*стор|эп+\s*стор|apple\s*(?:id|account)|эпл\s*айди|магазин|скача|установ'
+    r'|(?<![а-яё])(?:по)?став(?:ить|ится|ятся|лю)|не\s+(?:нахож|наход|могу\s+найти)|смен\w*\s+регион',
+    re.IGNORECASE,
+)
+
+
+def _store_claimed(evidence: str) -> bool:
+    return bool(_STORE_CLAIM.search(evidence))
+
+
 _SMALLTALK_PATTERNS = (
     r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
     r'добр(ое|ый|ой)', r'утро', r'день', r'вечер', r'ночи',
@@ -285,6 +297,10 @@ class SupportAgent:
                 elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and not with_image:
                     # Payment checks set sticky payment flags; «не работает» or «лимит увеличил» must not start them.
                     output = {'error': 'Клиент не сообщал об оплате: не проверяй оплату, ответь на его вопрос по данным аккаунта.'}
+                elif function.get('name') == 'app_store_region_help' and not _store_claimed(evidence) and not with_image:
+                    output = {'error': 'Клиент не писал про App Store или установку приложения. «Нет выбора страны» — '
+                                       'это список серверов в VPN-приложении: подскажи обновить подписку в приложении '
+                                       'или заново добавить ссылку подписки.'}
                 else:
                     output = await execute_support_tool(
                         function.get('name', ''), function.get('arguments', ''), telegram_id, state, evidence,

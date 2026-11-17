@@ -415,7 +415,7 @@ def test_other_glad_words_are_left_alone(text):
 # 7. The owner's facts.
 
 def test_policy_has_partner_and_guarantee_facts_and_keeps_the_closing_line_last():
-    assert 'Партнёрская программа: заявки рассматриваем в течение 3 часов в будни, в выходные может быть дольше.' in SUPPORT_POLICY
+    assert 'Партнёрская программа: заявки рассматриваем в течение 3 часов в будни, в выходные — дольше.' in SUPPORT_POLICY
     guarantee = next(line for line in SUPPORT_POLICY.splitlines() if line.startswith('Гарантия:'))
     assert 'да, гарантия есть' in guarantee and 'годовую подписку' in guarantee
     assert 'https://web.slig.app/offer' in guarantee and is_allowed_link('https://web.slig.app/offer')
