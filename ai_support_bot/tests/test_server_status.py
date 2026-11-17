@@ -635,3 +635,87 @@ def test_status_block_says_which_asked_countries_are_missing():
     assert 'Клиент спросил' not in plain
     assert 'Германия — есть в списке выше.' in plain
     assert 'Клиент спросил' not in ss.format_status_block(status, now=T0)
+
+
+# ---------------------------------------------------------------- где клиент и какой сервер он просит
+
+
+@pytest.mark.parametrize(
+    ('question', 'located', 'requested'),
+    [
+        ('Кажется, в Туркменистане не работает', ['TM'], []),
+        ('Я сейчас в Турции, VPN не подключается', ['TR'], []),
+        ('VPN не работает в Турции', ['TR'], []),
+        ('Живу в Египте, ничего не грузит', ['EG'], []),
+        ('Я из Туркменистана', ['TM'], []),
+        ('Есть сервер в Японии?', [], ['JP']),
+        ('Добавьте Турцию', [], ['TR']),
+        ('А Турция есть?', [], ['TR']),
+        ('Хочу сервер из Японии', [], ['JP']),
+        ('Не могу подключиться к Турции', [], ['TR']),
+        ('Сервер в Германии не работает', [], ['DE']),
+        ('А в Японии есть сервер?', [], ['JP']),
+        ('Германия не работает', [], ['DE']),
+        ('Нужен Египет, в Египте отдыхаю', ['EG'], ['EG']),
+        ('Я в Турции, есть сервер Турции?', ['TR'], ['TR']),
+        ('Я в Турции, есть сервер в Японии?', ['TR'], ['JP']),
+    ],
+)
+def test_country_roles_tell_where_the_client_is_from_a_server_request(question, located, requested):
+    assert ss.country_roles(question) == (located, requested)
+
+
+def _sample_block(question: str) -> str:
+    records = ss.parse_xray_metrics(SAMPLE)
+    status = ss.ServerStatus(checked_at=T0, proxies=ss.SourceSnapshot(items=tuple(records), fetched_at=T0), nodes=None)
+    return ss.format_status_block(status, now=T0, question=question)
+
+
+@pytest.mark.parametrize(
+    ('question', 'country'),
+    [
+        ('Кажется, в Туркменистане не работает', 'Туркменистан'),
+        ('Я сейчас в Турции, VPN не подключается', 'Турция'),
+    ],
+)
+def test_client_abroad_is_not_told_the_country_is_missing(question, country):
+    block = _sample_block(question)
+    assert f'Клиент, похоже, сам находится в стране: {country}. Это не вопрос о сервере' in block
+    assert 'не говори, что такой страны нет в списке' in block
+    assert 'Таких серверов у нас сейчас нет' not in block
+    assert 'Клиент спросил' not in block
+
+
+@pytest.mark.parametrize(('question', 'country'), [('Есть сервер в Японии?', 'Япония'), ('Добавьте Турцию', 'Турция')])
+def test_server_request_still_says_the_country_is_missing(question, country):
+    block = _sample_block(question)
+    assert f'Клиент спросил про страну: {country}. Таких серверов у нас сейчас нет' in block
+    assert 'сам находится' not in block
+
+
+def test_client_abroad_asking_for_that_server_gets_both_hints():
+    block = _sample_block('Нужен Египет, в Египте отдыхаю')
+    assert 'Клиент, похоже, сам находится в стране: Египет и спрашивает про сервер там' in block
+    assert 'Клиент спросил про страну: Египет. Таких серверов у нас сейчас нет' in block
+    assert 'Это не вопрос о сервере' not in block
+
+
+def test_whitelist_note_offers_whitelist_servers_for_mobile_only_failures():
+    block = _sample_block('На мобильном интернете не работает, на Wi-Fi работает')
+    note = next(line for line in block.splitlines() if line.startswith('«Белые списки»'))
+    assert 'только на мобильном интернете' in note
+    assert 'предложи переключиться на сервер «Белые списки» или «Белые списки #2»' in note
+    assert 'обновить подписку в приложении' in note and 'передай команде' in note
+    # Wi‑Fi and ordinary failures still do not get them.
+    assert 'При обычных сбоях, медленной работе и на Wi‑Fi их не советуй' in note
+    assert note.index('только на мобильном интернете') < note.index('их не советуй')
+
+
+def test_policy_offers_whitelist_servers_only_for_mobile_internet():
+    from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
+
+    rule = next(line for line in SUPPORT_POLICY.splitlines() if line.startswith('Обход белых списков'))
+    assert 'только на мобильном интернете' in rule
+    assert 'переключиться на сервер «Белые списки» (или «Белые списки #2»)' in rule
+    assert 'передай обращение' in rule
+    assert 'На Wi-Fi и при обычных сбоях их не советуй' in rule

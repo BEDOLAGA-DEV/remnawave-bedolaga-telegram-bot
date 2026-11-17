@@ -614,12 +614,94 @@ def asked_countries(question: str) -> list[str]:
     return found
 
 
+# Клиент сам в этой стране: «я сейчас в», «живу в», «отдыхаю в», «в поездке по», «я из».
+_LOCATION_WORD_RE = re.compile(
+    r'^(?:я|мы|сейчас|нахожусь|находимся|живу|живем|приехал\w*|прилетел\w*|переехал\w*|уехал\w*|улетел\w*'
+    r'|отдыха\w*|поездк\w*|командировк\w*|путешеств\w*)$'
+)
+# «В Туркменистане не работает», «в Египте отдыхаю», «VPN не подключается в Турции», «работает ли в Турции».
+_STAY_OR_FAILURE_RE = re.compile(
+    r'^(?:[a-zа-я-]+\s+){0,2}?(?:не\s+(?:работа|открыва|подключ|грузит|загружа|заход|пуска|соедин|коннект)'
+    r'|нет\s+(?:интернет|связи|соединени|доступ)|отдыха|живу|живем|нахожусь|находимся|сейчас)'
+)
+_USE_VERB_RE = re.compile(r'\b(?:работа|открыва|подключа|подключи|грузит|загружа|заход|пуска|соедин|коннект|пользова)\w*')
+# Запрос сервера: «есть ли», «есть сервер», «локация», «добавьте», «нужен», «хочу», «подключиться к».
+_REQUEST_WORD_RE = re.compile(
+    r'^(?:есть|нет|нуж\w*|добав\w*|хочу|хотел\w*|хотим|можно|сервер\w*|сервак\w*|server\w*|локаци\w*|location\w*'
+    r'|появ\w*|будет|будут)$'
+)
+_SERVER_WORD_RE = re.compile(r'^(?:сервер\w*|сервак\w*|server\w*|локаци\w*|location\w*)$')
+_REQUEST_AFTER_RE = re.compile(
+    r'^(?:[a-zа-я-]+\s+)??(?:есть|нет\b(?!\s+(?:интернет|связи|соединени|доступ))|нуж\w*|добав\w*'
+    r'|server\w*|сервер\w*|сервак\w*|локаци\w*|появ\w*|будет|будут)'
+)
+_CLAUSE_SPLIT_RE = re.compile(r'[.!?;,:\n()]')
+
+
+def _mention_roles(before: str, after: str) -> tuple[bool, bool]:
+    """Упоминание страны → (клиент там находится, клиент просит такой сервер)."""
+    words = _QUESTION_WORD_RE.findall(_CLAUSE_SPLIT_RE.split(before)[-1])[-4:]
+    clause_after = _CLAUSE_SPLIT_RE.split(after)[0].strip()
+    prep = words[-1] if words else ''
+    earlier = words[:-1]
+    server_near = any(_SERVER_WORD_RE.match(word) for word in words) or bool(
+        re.match(r'^(?:[a-zа-я-]+\s+)?(?:сервер|сервак|server|локаци)', clause_after))
+    located = False
+    if prep in {'в', 'во', 'по', 'из'} and any(_LOCATION_WORD_RE.match(word) for word in earlier):
+        located = True
+    elif prep in {'в', 'во'} and not server_near and (
+        _USE_VERB_RE.search(' '.join(earlier)) or _STAY_OR_FAILURE_RE.match(clause_after)
+    ):
+        located = True
+    elif prep == 'из' and not server_near:
+        located = True
+    requested = any(_REQUEST_WORD_RE.match(word) for word in words) or (
+        prep == 'к' and len(words) > 1 and words[-2].startswith(('подключ', 'переключ'))
+    ) or bool(_REQUEST_AFTER_RE.match(clause_after) and not (located and _STAY_OR_FAILURE_RE.match(clause_after)))
+    return located, requested
+
+
+def country_roles(question: str) -> tuple[list[str], list[str]]:
+    """Коды стран из вопроса: (где клиент сам находится, о каких серверах спрашивает).
+
+    «Кажется, в Туркменистане не работает» → (['TM'], []); «Есть сервер в Японии?» → ([], ['JP']).
+    Упоминание без признаков считается вопросом о сервере, как раньше.
+    """
+    text = (question or '').lower().replace('ё', 'е')
+    located: list[str] = []
+    requested: list[str] = []
+    unmarked: list[str] = []
+    for match in _QUESTION_WORD_RE.finditer(text):
+        code = _token_country(match.group())
+        if not code:
+            continue
+        is_located, is_requested = _mention_roles(text[:match.start()], text[match.end():])
+        for flag, codes in ((is_located, located), (is_requested, requested), (not (is_located or is_requested), unmarked)):
+            if flag and code not in codes:
+                codes.append(code)
+    requested += [code for code in unmarked if code not in located and code not in requested]
+    order = asked_countries(question)
+    return sorted(located, key=order.index), sorted(requested, key=order.index)
+
+
 def _asked_lines(question: str, labels: list[str]) -> list[str]:
-    """Подсказка модели по странам из вопроса: есть ли они в списке."""
-    asked = [country_name(code) for code in asked_countries(question)]
+    """Подсказка модели по странам из вопроса: где клиент сам и есть ли спрошенные серверы в списке."""
+    located_codes, requested_codes = country_roles(question)
+    lines: list[str] = []
+    for both in (False, True):
+        names = [country_name(code) for code in located_codes if (code in requested_codes) == both]
+        if not names:
+            continue
+        where = f'{"странах" if len(names) > 1 else "стране"}: {", ".join(names)}'
+        lines.append(
+            f'Клиент, похоже, сам находится в {where} и спрашивает про сервер там: про сервер ответь по списку, '
+            'с подключением помогай как при обычном сбое.' if both else
+            f'Клиент, похоже, сам находится в {where}. Это не вопрос о сервере: не говори, что такой страны нет '
+            'в списке; помогай с подключением как при обычном сбое.'
+        )
+    asked = [country_name(code) for code in requested_codes]
     missing = [name for name in asked if name not in labels]
     present = [name for name in asked if name in labels]
-    lines: list[str] = []
     if missing:
         lines.append(
             f'Клиент спросил про {"страны" if len(missing) > 1 else "страну"}: {", ".join(missing)}. '
@@ -804,10 +886,15 @@ def format_status_block(status: ServerStatus | None, now: float | None = None, q
         for label, names in groups:
             lines.append(f'• {label}: {", ".join(names)} — {_group_state(names)}')
         lines.extend(_asked_lines(question, [label for label, _ in groups]))
-        if any(label == WHITELIST_GROUP for label, _ in groups):
+        whitelist = next((names for label, names in groups if label == WHITELIST_GROUP), None)
+        if whitelist:
+            servers = ' или '.join(f'«{name}»' for name in list(whitelist)[:2])
             lines.append(
                 f'«{WHITELIST_GROUP}» — только для заглушек мобильного интернета, когда оператор открывает '
-                'лишь сайты из белого списка. При обычных сбоях, медленной работе и на Wi‑Fi их не советуй. '
+                'лишь сайты из белого списка. Если VPN не работает только на мобильном интернете (на Wi‑Fi '
+                'работает или клиент пишет про мобильную сеть, оператора, LTE), предложи переключиться на сервер '
+                f'{servers} и обновить подписку в приложении; не помогло — передай команде. '
+                'При обычных сбоях, медленной работе и на Wi‑Fi их не советуй. '
                 'Пропускает ли их оператор, мониторинг не видит: не пиши, что белые списки «работают», '
                 'пиши, что серверы включены.'
             )
