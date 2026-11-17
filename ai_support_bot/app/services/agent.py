@@ -107,8 +107,19 @@ _PAYMENT_STRONG = re.compile(
 _TECH_COMPLAINT = re.compile(r'не\s+(?:работа|грузит|загружа|подключ|открыва)|ничего\s+не\s+груз', re.IGNORECASE)
 
 
+# «Есть скидка при оплате за год?» asks about prices; only a payment already made needs a payment check.
+_PRICE_TOPIC = re.compile(r'скидк|цен\w*|стоим|стоит|тариф|акци', re.IGNORECASE)
+_PAYMENT_MADE = re.compile(
+    r'оплатил|заплатил|проплат|списал|списани|перев[её]л|внес|внёс|чек|выписк|квитанц|транзакц'
+    r'|не\s+(?:пришл|пришел|пришёл|зачисл|поступ|проход|продлил|добавил)',
+    re.IGNORECASE,
+)
+
+
 def _payment_claimed(evidence: str) -> bool:
     if not _PAYMENT_CLAIM.search(evidence):
+        return False
+    if _PRICE_TOPIC.search(evidence) and not _PAYMENT_MADE.search(evidence):
         return False
     return bool(_PAYMENT_STRONG.search(evidence)) or not _TECH_COMPLAINT.search(evidence)
 

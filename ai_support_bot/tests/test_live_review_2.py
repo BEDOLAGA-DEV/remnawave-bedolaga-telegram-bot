@@ -72,6 +72,19 @@ def test_plain_renewal_wish_still_counts(question):
     assert renewal_request(question)
 
 
+@pytest.mark.parametrize(('evidence', 'claimed'), [
+    ('Есть скидка при оплате за год?', False),
+    ('Какая цена при оплате картой?', False),
+    ('Оплатил со скидкой, а подписка не продлилась', True),
+    ('Не проходит оплата за продление', True),
+    ('Оплатил тариф на месяц, а показывает три дня', True),
+])
+def test_price_questions_are_not_payment_claims(evidence, claimed):
+    from ai_support_bot.app.services.agent import _payment_claimed
+
+    assert _payment_claimed(evidence) is claimed
+
+
 def test_guess_words_in_vpn_diagnostics_are_not_hedging():
     wifi = 'здравствуйте, у меня работает впн только когда телефон подключен к какой-то сети вайфай, а просто он не работает, в чем дело?'
     assert not looks_hedged('Возможно, оператор пускает только сайты из белого списка.', wifi, 0)
