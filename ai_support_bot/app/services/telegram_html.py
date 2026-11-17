@@ -9,14 +9,17 @@ from ai_support_bot.app.services.emoji_style import CUSTOM_EMOJI_IDS
 
 # Links the model may show to a customer. A domain also allows its subdomains (personal subscription links
 # live on connect.sligvpn.ru, the cabinet on web.slig.app). Sources: support_policy.py, response_rules.py,
-# navigation (web.slig.app, t.me/SligVPN_bot), service_identity.py (_SERVICE_HOSTS), Happ download page.
+# navigation (web.slig.app, t.me/SligVPN_bot), service_identity.py (_SERVICE_HOSTS), Happ and Incy sites.
+# happ-sub.at and incy.at are the owner's guides: allowed, but not offered to the model.
 # AISUP_EXTRA_LINK_HOSTS (comma separated) adds hosts without a release, e.g. a new subscription domain.
 _ALLOWED_LINK_DOMAINS = frozenset({
-    'slig.app', 'sligvpn.ru', 'happ.su',
+    'slig.app', 'sligvpn.ru', 'happ.su', 'incy.cc', 'docs.incy.cc', 'happ-sub.at', 'incy.at',
     'apps.apple.com', 'support.apple.com', 'play.google.com',
 } | {host.strip().lower().strip('.') for host in os.getenv('AISUP_EXTRA_LINK_HOSTS', '').split(',') if host.strip()})
 # Only our own bots and channels on t.me: any other handle can impersonate support or sell a foreign service.
 _ALLOWED_TELEGRAM_HANDLES = frozenset({'sligvpn_bot', 'sligapp', 'sligvpn', 'sligvpnhelp'})
+# GitHub only for the Happ and Incy releases: anyone can publish there.
+_ALLOWED_GITHUB_OWNERS = frozenset({'happ-proxy', 'incy-dev'})
 _REMOVED_LINK = '[ссылка удалена]'
 # Telegram turns bare domains into links too, so they are checked like full URLs. Only real TLDs count:
 # file names such as config.json or README.md must stay untouched.
@@ -81,9 +84,15 @@ def is_allowed_link(url: str) -> bool:
         parsed.port  # noqa: B018 - raises ValueError for a malformed port
     except ValueError:
         return False
-    if host == 't.me':
-        handle = parsed.path.strip('/').split('/', 1)[0].casefold()
-        return handle in _ALLOWED_TELEGRAM_HANDLES
+    if host in {'t.me', 'github.com'}:
+        # The account comes from the path: «/Happ-proxy/../other» would open another account in the browser.
+        segments = parsed.path.split('/')
+        if '%2e' in parsed.path.casefold() or {'.', '..'} & set(segments):
+            return False
+        owner = segments[1].casefold() if len(segments) > 1 else ''
+        if host == 'github.com':
+            return owner in _ALLOWED_GITHUB_OWNERS and len(segments) > 2
+        return owner in _ALLOWED_TELEGRAM_HANDLES
     return any(host == domain or host.endswith('.' + domain) for domain in _ALLOWED_LINK_DOMAINS)
 
 
