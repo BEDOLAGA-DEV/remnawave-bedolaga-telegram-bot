@@ -223,6 +223,44 @@ def account_transfer_request(question: str) -> bool:
     return bool(hacked or transfer or lost)
 
 
+_AUTO_RENEWAL = r'автопродл\w*|автоплат\w*|автосписан\w*|авто\s*-?\s*(?:продл|плат|списан)\w*|продлил\w*|продлен\w*|продлён\w*'
+_UNWANTED = (
+    r'не\s+(?:нужн\w*|нужен|просил\w*|хотел\w*|включал\w*|заказывал\w*|планировал\w*|собирал\w*)'
+    r'|без\s+(?:моего\s+)?(?:спроса|согласия|запроса|предупреждени\w*)'
+)
+# The charge already happened: «пришло», «списали», «10₽»; «чтобы не списали» is only a wish.
+_HAPPENED = r'(?<!не\s)(?<!бы\s)\b(?:спис\w*|снял\w*|сняли|снят\w*|пришл\w*|продлил\w*|продлен\w*|продлён\w*)|\d\s*(?:₽|р\b|руб)'
+
+
+def unwanted_renewal(question: str) -> bool:
+    """«10₽ пришло автопродление, хотя мне не нужно»: a renewal the customer did not want is a money dispute.
+
+    «Мне не нужно автопродление, как отключить?» has no charge yet and stays self-service.
+    """
+    text = question.casefold()
+    return bool(re.search(_AUTO_RENEWAL + '|' + _CHARGE, text) and re.search(_UNWANTED, text) and re.search(_HAPPENED, text))
+
+
+_DEVICES_EXCEEDED = re.compile(
+    r'(?:превыш\w*|макс\w*\.?|достигнут\w*)\s+(?:[\w.-]+\s+){0,3}?устройств|устройств\w*\s+(?:[\w-]+\s+){0,2}?(?:превыш|достигнут)\w*'
+)
+DEVICES_EXCEEDED_HELP = (
+    'Ошибка «превышено число устройств» значит, что все места подписки заняты. Удалите старое устройство: '
+    'в боте — ГЛАВНОЕ МЕНЮ → Мои подписки → выберите подписку → Устройства → Управление устройствами; '
+    'на сайте — https://web.slig.app/subscriptions → подписка → Мои устройства. Затем снова нажмите подключение в приложении.'
+)
+AUTOPAY_OFF_HELP = (
+    'Чтобы следующего списания не было, выключите автоплатёж: в боте https://t.me/SligVPN_bot — Мои подписки → '
+    'выберите подписку → Автоплатеж → Выключить; на сайте https://web.slig.app/subscriptions — переключатель '
+    '«Автопродление» на карточке подписки.'
+)
+
+
+def devices_exceeded(question: str) -> bool:
+    """«Макс. число устройств превышено», «пишет максимальное количество устройств»: every place is taken."""
+    return bool(_DEVICES_EXCEEDED.search(question.casefold()))
+
+
 def money_handoff(question: str) -> str | None:
     """Double payment, a wrong tariff or an account transfer always go to the team with their own reason."""
     text = question.casefold()
@@ -241,6 +279,7 @@ def money_dispute_topic(question: str) -> bool:
     text = question.casefold()
     return bool(
         _REFUND.search(text) or money_handoff(question) or cancellation_request(question) or account_transfer_request(question)
+        or unwanted_renewal(question)
         or re.search(r'возврат|отмен\w*|отпис\w*|(?:отключ|выключ|убр)\w*\s+(?:[\w-]+\s+)?(?:авто\w*|подписк|списан)|спорн\w*|чарджб'
                      r'|спис(?:ал|ан|ыв)\w*|(?:деньг|денег|средств|руб|₽).{0,40}(?:снял|сняли|снят|снима)'
                      r'|(?:снял\w*|сняли|снят\w*|снима\w*).{0,40}(?:деньг|денег|средств|руб|₽|карт)', text)
@@ -305,6 +344,8 @@ def mandatory_handoff(question: str, history: list) -> str | None:
         and (re.search(charge_pattern, text) or re.search(denial_pattern, text) or manual_review_followup(question))
     ):
         return 'unrecognized_charge'
+    if unwanted_renewal(question):
+        return 'unwanted_renewal'
     if reason := money_handoff(question):
         return reason
     if cancellation_request(question) or (manual_review_followup(question) and cancellation_request(recent_user)):
@@ -482,6 +523,10 @@ def handoff_answer(reason: str, question: str) -> str:
         return 'Передаю обращение о незнакомых списаниях команде для ручной проверки и запроса на отключение. Отмена и возврат пока не подтверждены.'
     if not re.search(r'[а-яё]', question, re.IGNORECASE):
         return 'I am passing your request to the support team for review. Please wait.'
+    if reason == 'unwanted_renewal':
+        # The devices question from the same message is self-service: it should not wait for the team.
+        devices = '\n\n' + DEVICES_EXCEEDED_HELP if devices_exceeded(question) else ''
+        return 'Передаю обращение о списании за автопродление команде для проверки. Возврат пока не подтверждён.\n\n' + AUTOPAY_OFF_HELP + devices
     return NOTICE
 
 

@@ -88,7 +88,7 @@ _ESCALATION_MARKER = ESCALATION_MARKER
 # Disputes, refunds, cancellations and payment checks keep a plain tone: no emoji at all.
 _SERIOUS_REASONS = {
     'unrecognized_charge', 'subscription_cancellation', 'subscription_restricted', 'payment_review',
-    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff',
+    'payment_dispute', 'refund', 'partnership', 'account_transfer', 'wrong_tariff', 'unwanted_renewal',
 }
 # Never under a cancellation, refund or disputed charge.
 _PAYMENT_BUTTONS = {'renew', 'buy', 'topup'}
@@ -551,7 +551,7 @@ class SupportAgent:
             support_state = {'issue': 'other'}
         if recovery_answer:
             support_state['diagnostics'] = recovery_state['diagnostics']
-        if forced_reason in {'subscription_cancellation', 'unrecognized_charge'}:
+        if forced_reason in {'subscription_cancellation', 'unrecognized_charge', 'unwanted_renewal'}:
             support_state['manual_review_reason'] = forced_reason
         if support_state.get('issue') in {'payment_missing', 'payment_activation'}:
             capture_payment_details(question, support_state)

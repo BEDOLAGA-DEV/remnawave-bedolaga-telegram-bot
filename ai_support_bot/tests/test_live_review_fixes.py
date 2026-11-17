@@ -18,7 +18,12 @@ from ai_support_bot.app.services.response_rules import (
     SHADOWROCKET_ANSWER,
     apps_answer,
     blank_page_answer,
+    devices_exceeded,
+    mandatory_handoff,
+    money_dispute_topic,
+    neutral_self_reference,
     region_change_refused,
+    unwanted_renewal,
 )
 from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
 from ai_support_bot.app.services.telegram_html import is_allowed_link, sanitize_telegram_html
@@ -307,3 +312,77 @@ async def test_white_screen_after_the_renew_button_is_not_vpn_advice(flow):
     vpn = await _ask(agent_mod, Session, 'Не открывается телеграм')
     assert captured['prompts']
     assert 'Safari' not in vpn['answer']
+
+
+# 5. «Превышено число устройств» and a renewal nobody wanted.
+
+LIVE_DEVICES_AND_RENEWAL = ('В Incy пишет «Макс. число устройств превышено», у меня 5 устройств в тарифе. '
+                            'И ещё 10₽ мне на почту пришло автопродление хотя мне не нужно')
+
+
+@pytest.mark.parametrize('question', [
+    LIVE_DEVICES_AND_RENEWAL,
+    'Пришло автопродление, хотя мне не нужно',
+    'Автопродление сработало, хотя я его не включал, пришло 10₽',
+    'Деньги списали за продление, хотя я не просил продлевать',
+])
+def test_unwanted_renewal_goes_to_the_team(question):
+    assert unwanted_renewal(question)
+    assert mandatory_handoff(question, []) == 'unwanted_renewal'
+    assert money_dispute_topic(question)
+
+
+@pytest.mark.parametrize('question', [
+    'Мне не нужно автопродление, как отключить?',
+    'Как отключить автопродление?',
+    'Не могу отключить автопродление',
+    'Автопродление не нужно, чтобы не списали — где выключить?',
+    'Хочу продлить подписку',
+])
+def test_autopay_questions_without_a_charge_stay_self_service(question):
+    assert not unwanted_renewal(question)
+    assert mandatory_handoff(question, []) != 'unwanted_renewal'
+
+
+@pytest.mark.parametrize(('question', 'expected'), [
+    ('Макс. число устройств превышено', True),
+    ('в приложении пишет что максимальное число устройств', True),
+    ('Превышено количество устройств', True),
+    ('Лимит устройств превышен', True),
+    ('Сколько устройств можно подключить?', False),
+    ('Какой лимит устройств?', False),
+])
+def test_device_limit_error_is_recognised(question, expected):
+    assert devices_exceeded(question) is expected
+
+
+def test_device_limit_rule_is_one_clear_answer():
+    rule = next(line for line in SUPPORT_POLICY.splitlines() if line.startswith('Ошибка «превышено/макс. число устройств»'))
+    assert 'все места подписки заняты' in rule
+    assert 'ГЛАВНОЕ МЕНЮ → Мои подписки → выберите подписку → Устройства → Управление устройствами' in rule
+    assert 'https://web.slig.app/subscriptions' in rule
+    assert 'никогда не пиши «удалять не нужно»' in rule
+    assert 'передай команде' in rule
+    assert 'сбрасывать все устройства' in SUPPORT_POLICY
+    assert 'Нежеланное автопродление' in SUPPORT_POLICY and 'чек не проси' in SUPPORT_POLICY
+
+
+@pytest.mark.asyncio
+async def test_live_devices_and_unwanted_renewal_dialogue(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Пришлите чек этой операции.'
+    result = await _ask(agent_mod, Session, LIVE_DEVICES_AND_RENEWAL)
+    assert not captured['prompts']
+    assert result['escalate']
+    assert result['escalation_reason'] == 'unwanted_renewal'
+    assert 'чек' not in result['answer']
+    assert 'Возврат пока не подтверждён' in result['answer']
+    assert 'Автоплатеж → Выключить' in result['answer'] and '«Автопродление»' in result['answer']
+    assert 'Управление устройствами' in result['answer'] and 'Мои устройства' in result['answer']
+    assert 'удалять не нужно' not in result['answer']
+    assert result['buttons'] == []
+    assert 'tg-emoji' not in result['answer']
+    follow = await _ask(agent_mod, Session, '?')
+    assert follow['escalation_reason'] == 'unwanted_renewal'
+    assert not captured['prompts']
+
