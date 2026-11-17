@@ -287,6 +287,7 @@ def test_blank_page_after_a_button_points_to_the_browser_and_the_bot(question):
     ('Не открывается', []),
     ('Не открывается', _history(('user', 'VPN не работает'), ('assistant', 'Смените сервер в приложении.'))),
     ('В Happ белый экран', RENEW_REPLY),
+    ('В телеграме белый экран', []),
 ])
 def test_ordinary_vpn_failures_keep_their_diagnostics(question, history):
     assert blank_page_answer(question, history) is None
@@ -294,6 +295,8 @@ def test_ordinary_vpn_failures_keep_their_diagnostics(question, history):
 
 def test_blank_page_rule_is_in_the_policy():
     assert 'Белый экран: если после кнопки или ссылки на кабинет' in SUPPORT_POLICY
+    # A bare «белый экран» with no VPN words is the page too; only «→ Продлить» needs the renew context.
+    assert 'выберите подписку.' in blank_page_answer('Белый экран', [])
 
 
 @pytest.mark.asyncio

@@ -616,7 +616,7 @@ def blank_page_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = next((getattr(item, 'content', '') or '' for item in reversed(history) if item.role == 'assistant'), '')
     after_link = bool(re.search(r'кнопк|web\.slig\.app', previous, re.IGNORECASE))
-    blank = bool(_BLANK_PAGE.search(text)) and not _CLIENT_APP.search(text)
+    blank = bool(_BLANK_PAGE.search(text)) and not _CLIENT_APP.search(text) and (after_link or not _VPN_TARGET.search(text))
     failed = after_link and len(text) <= 80 and bool(_PAGE_FAILED.search(text)) and not _VPN_TARGET.search(text) and not _CLIENT_APP.search(text)
     if not (blank or failed):
         return None
