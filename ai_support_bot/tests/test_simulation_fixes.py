@@ -221,6 +221,43 @@ def test_english_price_mismatch_goes_to_the_team(question):
     assert mandatory_handoff(question, []) == 'price_mismatch'
 
 
+@pytest.mark.parametrize(('text', 'operation'), [
+    ('Идентификатор операции: 487219365104', '487219365104'),
+    ('а идентификатор операции у меня в выписке такой: 9482735612.', '9482735612'),
+    ('идентификатор платежа: 7f3a9c2e-1b4d-4a6b-9f2e-8c1d4b6a7e11. Пополнял через сайт.', '7f3a9c2e-1b4d-4a6b-9f2e-8c1d4b6a7e11'),
+    ('номер операции A1B2C3D4E5F6G7H8I9J0K', 'A1B2C3D4E5F6G7H8I9J0K'),
+])
+def test_payment_operation_numbers_are_captured(text, operation):
+    from ai_support_bot.app.services.dialogue_tools import capture_payment_details
+
+    state = {}
+    capture_payment_details(text, state)
+    assert state.get('payment_operation_id') == operation
+
+
+def test_card_numbers_are_not_taken_for_an_operation():
+    from ai_support_bot.app.services.dialogue_tools import capture_payment_details
+
+    state = {}
+    capture_payment_details('номер карты 4276123456789012, оплата 500 ₽', state)
+    assert 'payment_operation_id' not in state
+
+
+def test_relative_payment_time_is_captured():
+    from ai_support_bot.app.services.dialogue_tools import capture_payment_details
+
+    state = {}
+    capture_payment_details('500 ₽, сегодня, примерно 10–15 минут назад', state)
+    assert state.get('payment_amount') and state.get('payment_time')
+
+
+@pytest.mark.parametrize('question', ['Хорошо, сейчас напишу. Идентификатор операции: 487219365104', 'Ок, вот почта ivan@mail.ru', 'Хорошо, 500 ₽ было'])
+def test_messages_with_data_are_not_acknowledgements(question):
+    from ai_support_bot.app.services.agent import _acknowledgement
+
+    assert not _acknowledgement(question)
+
+
 def test_policy_covers_the_simulation_findings():
     for text in ('отвечай на языке клиента', 'Подписка закончилась: если в данных аккаунта подписка истекла',
                  'до 5 — Стандарт, 6–10 — Семейный', '«Добавить в Happ»', '«Страна не поддерживается»',

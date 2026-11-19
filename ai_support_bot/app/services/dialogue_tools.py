@@ -21,11 +21,25 @@ def extract_reported_email(text: str) -> str | None:
     return emails[0] if len(emails) == 1 else None
 
 
+_UUID = re.compile(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', re.IGNORECASE)
+# A bank operation number next to its label. 13–19 digits are skipped: that is what card numbers look like.
+_OPERATION_NEAR = re.compile(
+    r'(?:номер|идентификатор|\bid\b|операци\w*|транзакц\w*|платеж\w*|платёж\w*)[^\d\n]{0,30}?(?<!\d)(\d{8,12}|\d{20,40})(?!\d)',
+    re.IGNORECASE,
+)
+_RELATIVE_TIME = re.compile(
+    r'\b\d+(?:\s*[–-]\s*\d+)?\s*(?:минут\w*|мин\.?|час\w*)\s+назад|(?:час|полчаса)\s+назад', re.IGNORECASE,
+)
+
+
 def capture_payment_details(text: str, state: dict) -> None:
     """Preserve explicit user-supplied details; these never confirm payment."""
     amount = re.search(r'\b\d+(?:[.,]\d{1,2})?\s*(?:₽|руб\w*)', text, re.IGNORECASE)
-    paid_at = re.search(r'\b(?:\d{2}\.\d{2}(?:\.\d{4})?\s+)?(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*(?:МСК|UTC|GMT))?', text, re.IGNORECASE)
+    paid_at = re.search(r'\b(?:\d{2}\.\d{2}(?:\.\d{4})?\s+)?(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*(?:МСК|UTC|GMT))?', text, re.IGNORECASE) \
+        or _RELATIVE_TIME.search(text)
     operation = next((token for token in re.findall(r'\b[A-Z0-9]{20,64}\b', text) if re.search(r'[A-Z]', token) and re.search(r'\d', token)), None)
+    if not operation and (match := _UUID.search(text) or _OPERATION_NEAR.search(text)):
+        operation = match.group(1) if match.re is _OPERATION_NEAR else match.group()
     if amount:
         state['payment_amount'] = amount.group().strip()
     if paid_at:
