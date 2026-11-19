@@ -163,7 +163,7 @@ WAITING_ANSWER_EN = 'Your request is already with the team — they will reply h
 
 def _waiting_after_handoff(question: str, history: list) -> bool:
     last = next((item.content or '' for item in reversed(history) if item.role == 'assistant'), '')
-    if not re.search(r'Передаю|Уточняю этот вопрос|уже у команды|уже передано', last):
+    if not (_handoff_said(last) or re.search(r'Уточняю этот вопрос|уже у команды|уже передано|already with the team', last)):
         return False
     text = (question or '').strip().casefold()
     words = re.findall(r'[а-яёa-z]+', text)
@@ -211,6 +211,26 @@ _SERVICE_REGION_BLOCK = re.compile(
 
 # Present tense only: «если не поможет — передам» is a promise, not a handoff.
 _HANDOFF_SAID = re.compile(r'\bпереда(?:ю|[её]м)\b[^.!?\n]{0,60}(?:команд|на\s+проверку|специалист|оператор)', re.IGNORECASE)
+# «Передам на проверку» without «если», and «I’ve passed it to the team», are handoffs too.
+_HANDOFF_PROMISE = re.compile(r'\bпередам\b[^.!?\n]{0,60}(?:команд|проверк|специалист|оператор)', re.IGNORECASE)
+_HANDOFF_EN = re.compile(
+    r"\b(?:i(?:['’]ve|\s+have)\s+passed|i(?:['’]ll|\s+will)\s+pass|i(?:['’]m|\s+am)\s+passing|passing\s+(?:it|this|your\s+request))\b"
+    r"[^.!?\n]{0,60}(?:team|review|check)",
+    re.IGNORECASE,
+)
+
+
+def _handoff_said(text: str) -> bool:
+    for sentence in re.split(r'(?<=[.!?\n])\s+', text or ''):
+        if _HANDOFF_SAID.search(sentence):
+            return True
+        if _HANDOFF_PROMISE.search(sentence) and not re.search(r'(?<![а-яё])(?:если|когда|после|при)(?![а-яё])', sentence, re.IGNORECASE):
+            return True
+        if _HANDOFF_EN.search(sentence) and not re.search(r'\bif\b', sentence, re.IGNORECASE):
+            return True
+    return False
+
+
 # «Работает только с вай-фай»: VPN works somewhere, so the subscription is alive, maybe on another account.
 _WORKS_SOMEWHERE = re.compile(
     r'(?<!не\s)работа(?:ет|л|ло|ли)\s+(?:[а-яёa-z]+\s+){0,2}?(?:только\s+)?(?:с|через|на|по|при|когда)\b'
@@ -836,7 +856,7 @@ class SupportAgent:
         answer_text, button_actions = answer_buttons.extract(answer_text)
         escalate = has_escalation_marker(answer_text)
         # The model told the client «передаю команде» but left out the marker: the team must still get it.
-        if not escalate and _HANDOFF_SAID.search(answer_text or ''):
+        if not escalate and _handoff_said(answer_text):
             escalate = True
         if not forced_reason and support_state.get('_store_help'):
             # The region instructions go once; a second call gets the other clients instead of a copy.

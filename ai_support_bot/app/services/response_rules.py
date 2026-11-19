@@ -120,8 +120,17 @@ _PROMO_FAILED = re.compile(
 )
 
 
+_PRICE_MISMATCH_EN = re.compile(
+    r"discount[^.!?]{0,120}(?:full\s+(?:price|amount)|no\s+discount|without\s+(?:the\s+)?discount|(?:isn|wasn|didn)['’]?t\s+appl|not\s+appl)"
+    r"|(?:promo\s*code|coupon)[^.!?]{0,60}(?:doesn|didn|isn|won)['’]?t\s+(?:work|appl)",
+    re.IGNORECASE,
+)
+
+
 def price_mismatch(question: str) -> bool:
     text = question or ''
+    if _PRICE_MISMATCH_EN.search(text):
+        return True
     if _PROMO_FAILED.search(text) and re.search(r'оплат|заплат|купить|покупк|корзин', text, re.IGNORECASE):
         return True
     return bool(_PRICE_MISMATCH.search(text)) and bool(re.search(r'скидк|цен|сумм|₽|руб|\d+\s*р\b', text, re.IGNORECASE))

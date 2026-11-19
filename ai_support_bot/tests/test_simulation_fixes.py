@@ -197,6 +197,30 @@ async def test_acknowledgement_gets_a_short_reply_without_a_handoff(flow):  # no
     assert 'напишите сюда' in result['answer']
 
 
+@pytest.mark.parametrize(('text', 'said'), [
+    ('Спасибо, проверю. Сумма 500 ₽, время 14:20. Передам на проверку.', True),
+    ('Проверю и передам обращение на ручную проверку.', True),
+    ('Если после этих шагов не заработает, напишите — передам обращение команде.', False),
+    ('Если не поможет — передам обращение на проверку.', False),
+    ('I’ve passed it for review.', True),
+    ('I’ve passed it to the team for review.', True),
+    ('I’ll pass this for manual check.', True),
+    ('If it still drops, I’ll pass this for manual check.', False),
+])
+def test_handoff_in_any_tense_and_in_english(text, said):
+    from ai_support_bot.app.services.agent import _handoff_said
+
+    assert _handoff_said(text) is said
+
+
+@pytest.mark.parametrize('question', [
+    'Hi, I saw a 20% discount for the yearly plan, but when I tried to pay, the price was full amount with no discount.',
+    'My promo code doesn’t work at checkout',
+])
+def test_english_price_mismatch_goes_to_the_team(question):
+    assert mandatory_handoff(question, []) == 'price_mismatch'
+
+
 def test_policy_covers_the_simulation_findings():
     for text in ('отвечай на языке клиента', 'Подписка закончилась: если в данных аккаунта подписка истекла',
                  'до 5 — Стандарт, 6–10 — Семейный', '«Добавить в Happ»', '«Страна не поддерживается»',
