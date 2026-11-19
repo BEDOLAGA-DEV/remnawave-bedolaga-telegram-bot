@@ -19,6 +19,13 @@ def test_our_gateway_names_on_a_receipt_are_ours(name, url):
     assert classify_service_source(name, url, 'payment_confirmation')['status'] == 'ours'
 
 
+def test_gateway_bot_named_in_the_text_counts_as_ours():
+    from ai_support_bot.app.services.service_identity import official_service_reference
+
+    source = official_service_reference('Оплатила подписку через бота Strelka_vpn_bot, а подписка не продлилась')
+    assert source and source['status'] == 'ours'
+
+
 def test_unfamiliar_seller_on_a_receipt_goes_to_the_team():
     source = classify_service_source('SomeOther VPN', 'https://t.me/someother_vpn_bot', 'payment_confirmation')
     assert source['status'] == 'unknown'

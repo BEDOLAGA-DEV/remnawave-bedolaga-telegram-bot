@@ -49,10 +49,13 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
 
 
 def official_service_reference(text: str) -> dict | None:
-    match = re.search(r'(?<![\w/])@(?:sligapp|sligvpn_bot)(?![\w])|https://t\.me/(?:sligapp|sligvpn_bot)(?![\w/])'
+    match = re.search(r'(?<![\w/])@?(?:sligapp|sligvpn_bot|strelka_vpn_bot)(?![\w])|https://t\.me/(?:sligapp|sligvpn_bot|strelka_vpn_bot)(?![\w/])'
                       r'|(?<![\w.@/])(?:https://)?(?:web\.)?slig\.app(?![\w.-])', text, re.IGNORECASE)
     if match:
-        return classify_service_source('', match.group(), 'seller_chat')
+        value = match.group()
+        if not value.startswith(('@', 'http')) and '.' not in value:
+            value = '@' + value  # «через бота Strelka_vpn_bot»: a bare handle, not a site
+        return classify_service_source('', value, 'seller_chat')
     return None
 
 
