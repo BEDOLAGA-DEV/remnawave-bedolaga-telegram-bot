@@ -78,7 +78,7 @@ from ai_support_bot.app.services.service_identity import (
 )
 from ai_support_bot.app.services.summary_service import summary_service
 from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
-from ai_support_bot.app.services.telegram_html import sanitize_telegram_html
+from ai_support_bot.app.services.telegram_html import drop_removed_link_lines, sanitize_telegram_html
 from ai_support_bot.app.services.user_data import build_user_context, resolve_user_language
 
 
@@ -105,6 +105,21 @@ _PAYMENT_STRONG = re.compile(
     r'плат|списа|деньг|чек|выписк|квитанц|транзакц|пополн|руб|₽|зачт|зачисл|засчит|сбп|stars|зв[её]зд', re.IGNORECASE
 )
 _TECH_COMPLAINT = re.compile(r'не\s+(?:работа|грузит|загружа|подключ|открыва)|ничего\s+не\s+груз', re.IGNORECASE)
+# A screenshot with «очень маленькая скорость» is an app screen, not a receipt.
+_TECH_ISSUE = re.compile(
+    _TECH_COMPLAINT.pattern + r'|скорост|медленн|тормоз|плохо\s+работ|пропада|отвалива|вылета|\bлаг', re.IGNORECASE
+)
+# «Я же пользуюсь оплаченным периодом» while this account shows no subscription.
+_SUBSCRIPTION_CLAIM = re.compile(
+    r'(?:я\s+же|ведь)\s+(?:пользуюсь|оплатил\w*|купил\w*)|пользуюсь\s+(?:уже\s+)?оплаченн|оплаченн\w*\s+период'
+    r'|у\s+меня\s+(?:же\s+|ведь\s+)?(?:есть|активн\w*)\s+(?:\w+\s+)?подписк'
+    r'|подписк\w*\s+(?:же\s+|ведь\s+)?(?:есть|активна|действует|оплачена)',
+    re.IGNORECASE,
+)
+ACCOUNT_MISMATCH_ANSWER = (
+    'В этом аккаунте подписок не видно — возможно, подписка оформлена на другой аккаунт Telegram или email. '
+    'Передаю обращение команде: проверят по оплате, подождите, пожалуйста.'
+)
 
 
 # «Есть скидка при оплате за год?» asks about prices; only a payment already made needs a payment check.
@@ -319,7 +334,9 @@ class SupportAgent:
                 function = call.get('function') or {}
                 if executed >= 4:
                     output = {'error': 'Лимит вызовов исчерпан. Ответь по собранным данным или передай обращение.'}
-                elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and not with_image:
+                elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and (
+                    not with_image or _TECH_ISSUE.search(evidence)
+                ):
                     # Payment checks set sticky payment flags; «не работает» or «лимит увеличил» must not start them.
                     output = {'error': 'Клиент не сообщал об оплате: не проверяй оплату, ответь на его вопрос по данным аккаунта.'}
                 elif function.get('name') == 'app_store_region_help' and not _store_claimed(evidence) and not with_image:
@@ -812,7 +829,7 @@ class SupportAgent:
         if (scope_answer and not forced_reason) or generated_program(answer_text):
             answer_text = scope_answer or SUPPORT_SCOPE_ANSWER
             escalate, hedged, escalation_reason = False, False, None
-        answer_text = convert_markdown_to_html(answer_text)
+        answer_text = drop_removed_link_lines(convert_markdown_to_html(answer_text))
         if not escalate and unsupported_price(re.sub(r'<[^>]*>', '', answer_text), question, catalog_block):
             answer_text = NOTICE
             escalate = True
@@ -866,6 +883,12 @@ class SupportAgent:
                     lead='⏳',
                 )
                 buttons = answer_buttons.renew_buttons(context)
+        # The client uses a paid period that this account does not show: receipts in a loop won't find it.
+        if not (serious or escalate) and _SUBSCRIPTION_CLAIM.search(question):
+            context = user_context or await build_user_context(telegram_id)
+            if re.search(r'Подписки:\s*отсутствуют', context or ''):
+                answer_text, escalate, buttons = decorate(ACCOUNT_MISMATCH_ANSWER, lead='🎧'), True, []
+                escalation_reason = 'account_mismatch'
         answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,

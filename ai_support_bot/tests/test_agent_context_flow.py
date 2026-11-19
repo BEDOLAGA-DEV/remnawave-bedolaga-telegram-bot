@@ -1351,7 +1351,7 @@ async def test_semantic_reward_classification_always_reads_verified_prize(flow, 
 
 
 @pytest.mark.asyncio
-async def test_foreign_payment_screenshot_cannot_renew_own_active_subscription(flow, monkeypatch):
+async def test_unfamiliar_seller_on_a_receipt_goes_to_the_team(flow, monkeypatch):
     from ai_support_bot.app.services import dialogue_tools
     captured, agent_mod, Session = flow
     async def account_support(telegram_id, kind, email=None):
@@ -1371,17 +1371,13 @@ async def test_foreign_payment_screenshot_cannot_renew_own_active_subscription(f
         result = await agent_mod.support_agent.generate_answer(db, 4242,
             'Проплатил 3 мес. подписки, думал продлю имеющиеся, но не получается. Можете помочь?',
             image_url='https://example.invalid/payment-photo')
-    assert 'другой VPN-сервис' in result['answer']
+    # The gateway shows other seller names on receipts: the team checks the receipt, the client is not sent away.
+    assert 'Передаю чек команде' in result['answer']
+    assert result['escalate'] is True
+    assert 'другой VPN-сервис' not in result['answer']
     assert 'уже добавлены' not in result['answer']
     assert 'private-subscription-key' not in result['answer']
     assert captured['options'][0]['tool_choice'] == {'type': 'function', 'function': {'name': 'verify_service_source'}}
-    captured['reply'] = 'Да, уже добавлены оплаченные дни.'
-    for question in ('Текущая подписка продлится на 3 месяца?', 'К ней 3 проплаченных месяца добавятся?'):
-        async with Session() as db:
-            result = await agent_mod.support_agent.generate_answer(db, 4242, question)
-        assert result['escalation_reason'] == 'repeated_answer'
-        assert 'уже добавлены' not in result['answer']
-    assert 'foreign' in captured['prompts'][-1]
 
 
 @pytest.mark.asyncio

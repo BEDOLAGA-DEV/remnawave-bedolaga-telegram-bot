@@ -14,6 +14,10 @@ from ai_support_bot.app.services.service_identity import renewal_payment_request
 
 
 NOTICE = 'Передаю обращение команде для проверки, подождите, пожалуйста.'
+OUTAGE_STEP = (
+    'Пока ждёте: обновите подписку в приложении и переподключитесь. '
+    'Если VPN не работает только на мобильном интернете, выберите сервер «Белые списки».'
+)
 SUPPORT_SCOPE_ANSWER = 'Я помогаю с SligVPN: подключением, подписками, оплатой и настройкой VPN-клиентов. Напишите, какой вопрос по сервису нужно решить.'
 # Shadowrocket is left out on purpose: it does not send the HWID the device limit relies on (not told to customers).
 CLIENTS = {
@@ -108,8 +112,18 @@ _PRICE_MISMATCH = re.compile(
 )
 
 
+# «Промокод на скидку, а сегодня не удаётся оплатить с ним»: only the team can see why it was not applied.
+_PROMO_FAILED = re.compile(
+    r'(?:промокод|промо\b|скидк)[^.!?\n]{0,60}не\s+(?:удаётся|удается|получается|применя|работа|проход|срабат|действ)'
+    r'|не\s+(?:удаётся|удается|получается)\s+(?:оплатить|применить)[^.!?\n]{0,30}(?:промокод|скидк)',
+    re.IGNORECASE,
+)
+
+
 def price_mismatch(question: str) -> bool:
     text = question or ''
+    if _PROMO_FAILED.search(text) and re.search(r'оплат|заплат|купить|покупк|корзин', text, re.IGNORECASE):
+        return True
     return bool(_PRICE_MISMATCH.search(text)) and bool(re.search(r'скидк|цен|сумм|₽|руб|\d+\s*р\b', text, re.IGNORECASE))
 
 
@@ -554,6 +568,9 @@ def handoff_answer(reason: str, question: str) -> str:
         return 'Передаю обращение о незнакомых списаниях команде для ручной проверки и запроса на отключение. Отмена и возврат пока не подтверждены.'
     if not re.search(r'[а-яё]', question, re.IGNORECASE):
         return 'I am passing your request to the support team for review. Please wait.'
+    if reason == 'diagnostics_failed' and _LONG_OUTAGE.search(question.casefold()) and not _TRIED.search(question.casefold()):
+        # Days without VPN: the team takes it, and one quick step may solve it before they answer.
+        return NOTICE + '\n\n' + OUTAGE_STEP
     if reason == 'unwanted_renewal':
         # The devices question from the same message is self-service: it should not wait for the team.
         devices = '\n\n' + DEVICES_EXCEEDED_HELP if devices_exceeded(question) else ''

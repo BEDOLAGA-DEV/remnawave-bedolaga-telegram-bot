@@ -8,8 +8,11 @@ from ai_support_bot.app.services.service_identity import (
 
 
 @pytest.mark.parametrize(('name', 'url', 'location', 'status'), [
-    ('Other VPN', 'https://sub.other-vpn.example/personal-key', 'payment_confirmation', 'foreign'),
-    ('v2rayTun VPN | VLESS | HAPP', 'https://sub.other-vpn.example/private', 'payment_confirmation', 'foreign'),
+    ('Other VPN', 'https://sub.other-vpn.example/personal-key', 'payment_confirmation', 'unknown'),
+    ('v2rayTun VPN | VLESS | HAPP', 'https://sub.other-vpn.example/private', 'payment_confirmation', 'unknown'),
+    ('Other VPN', 'https://sub.other-vpn.example/personal-key', 'seller_chat', 'foreign'),
+    ('Strelka_vpn_bot', 'https://t.me/Strelka_vpn_bot', 'payment_confirmation', 'ours'),
+    ('ООО «Максим»', '', 'payment_confirmation', 'ours'),
     ('Happ', '', 'client', 'irrelevant'),
     ('Other VPN', 'https://other-vpn.example/', 'advertisement', 'irrelevant'),
     ('Happ', 'https://happ.su/', 'payment_confirmation', 'unknown'),

@@ -21,6 +21,10 @@ _ALLOWED_TELEGRAM_HANDLES = frozenset({'sligvpn_bot', 'sligapp', 'sligvpn', 'sli
 # GitHub only for the Happ and Incy releases: anyone can publish there.
 _ALLOWED_GITHUB_OWNERS = frozenset({'happ-proxy', 'incy-dev'})
 _REMOVED_LINK = '[ссылка удалена]'
+# «Сайт на скриншоте: [ссылка удалена]» tells the client nothing: such a line goes away entirely.
+_REMOVED_LINK_LINE = re.compile(
+    r'(?m)^[ \t]*(?:[^\n]{0,60}?[:—–-][ \t]*)?' + re.escape(_REMOVED_LINK) + r'[ \t.,;!)]*(?:\n|$)'
+)
 # Telegram turns bare domains into links too, so they are checked like full URLs. Only real TLDs count:
 # file names such as config.json or README.md must stay untouched.
 _BARE_DOMAIN_TLDS = frozenset({
@@ -161,6 +165,12 @@ class _TelegramHTML(HTMLParser):
             self.parts.append(_link_in_text(match, inside_anchor='a' in self.stack or 'code' in self.stack))
             offset = match.end()
         self.parts.append(escape(data[offset:], quote=False))
+
+
+def drop_removed_link_lines(text: str) -> str:
+    if not text or _REMOVED_LINK not in text:
+        return text
+    return _REMOVED_LINK_LINE.sub('', text).strip()
 
 
 def sanitize_telegram_html(text: str) -> str:

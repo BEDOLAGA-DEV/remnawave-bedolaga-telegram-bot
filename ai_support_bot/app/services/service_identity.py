@@ -4,7 +4,9 @@ from urllib.parse import urlsplit
 
 
 _SERVICE_HOSTS = {'slig.app', 'web.slig.app', 'sligvpn.ru', 'connect.sligvpn.ru'}
-_SERVICE_BOTS = {'sligvpn_bot', 'sligapp'}
+_SERVICE_BOTS = {'sligvpn_bot', 'sligapp', 'strelka_vpn_bot'}
+# Our payment gateway shows its own seller names on receipts; the list is not complete.
+_GATEWAY_NAME = re.compile(r'strelka|стрелк|максим', re.IGNORECASE)
 _CLIENT_NAME = re.compile(r'^(?:happ|incy|v2raytun|v2rayng|v2rayn|shadowrocket|streisand|v2box)$', re.IGNORECASE)
 _PAYMENT_REPORT = re.compile(r'оплатил|заплатил|проплат|списал|чек|не зачис|не продл', re.IGNORECASE)
 
@@ -13,7 +15,8 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
     if location in {'client', 'advertisement'}:
         return {'status': 'irrelevant', 'location': location}
     name = name.strip()[:120]
-    own_name = bool(re.search(r'(?<![\w])slig\s*vpn(?![\w])|(?<![\w])slig\.?app(?![\w.])', name, re.IGNORECASE))
+    own_name = bool(re.search(r'(?<![\w])slig\s*vpn(?![\w])|(?<![\w])slig\.?app(?![\w.])', name, re.IGNORECASE)
+                    or _GATEWAY_NAME.search(name))
     host, bot = '', ''
     try:
         if url.startswith('@'):
@@ -38,7 +41,8 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
             status = 'conflict'
         elif own_url or (own_name and not host):
             status = 'ours'
-        elif other_vpn and host:
+        elif other_vpn and host and location not in {'payment_confirmation', 'merchant'}:
+            # A receipt may carry any gateway name: only the client's own words make the seller foreign.
             status = 'foreign'
     # Persist/display only the host, never a personal subscription token or query.
     return {'status': status, 'seller_name': name, 'host': host, 'location': location}
@@ -100,6 +104,9 @@ def renewal_verification_answer(source: dict | None, state: dict) -> tuple[str, 
              'По этой операции обратитесь к продавцу, указанному в подтверждении. '
              'Если отдельно оплачивали SligVPN, сообщите об этой операции — проверим её.'), False,
         )
+    if status != 'ours' and (source or {}).get('location') in {'payment_confirmation', 'merchant'}:
+        # The receipt is already here: an unfamiliar seller name is for the team to check, not a reason to ask again.
+        return 'Передаю чек команде: проверим оплату и срок подписки, подождите, пожалуйста.', True
     if status != 'ours':
         return (
             ('Проверим оплату. Подскажите, где вы оплачивали: в нашем боте (@SligVPN_bot или @SligApp) '
