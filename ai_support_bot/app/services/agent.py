@@ -586,6 +586,13 @@ class SupportAgent:
             support_state['issue'] = 'payment_activation'
         if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
             forced_reason = support_state['manual_review_reason']
+        # «Ок, жду» after a handoff: the team already has it — no rule or payment template may hand it over again.
+        waiting = not image_url and _waiting_after_handoff(question, history)
+        if waiting:
+            forced_reason = None
+            support_state.pop('renewal_verification', None)
+            if support_state.get('issue') in {'payment_activation', 'payment_missing'}:
+                support_state['issue'] = 'other'
         recovery_answer = None
         recovery_state = dict(support_state)
         if not image_url and forced_reason in {None, 'diagnostics_failed'} and support_state.get('issue') != 'payment_missing' and not is_payment_missing(question):
@@ -617,7 +624,7 @@ class SupportAgent:
             await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
         if switched_question == '' and not image_url:
             direct_answer, direct_kind = 'Напишите ваш новый вопрос.', None
-        if not forced_reason and not direct_answer and not image_url and _waiting_after_handoff(question, history):
+        if waiting and not direct_answer:
             direct_answer, direct_kind = (WAITING_ANSWER_EN if _foreign_language(question) else WAITING_ANSWER), None
             smalltalk = False
         if smalltalk and not forced_reason and not direct_answer:

@@ -45,6 +45,16 @@ def test_other_messages_after_a_handoff_still_count(question, history):
 
 
 @pytest.mark.asyncio
+async def test_waiting_after_a_money_handoff_is_not_handed_over_again(flow):  # noqa: F811
+    captured, agent_mod, Session = flow
+    first = await _ask(agent_mod, Session, 'С карты списали 219 ₽ автопродлением, хотя мне не нужно. Верните, пожалуйста.')
+    assert first['escalate'] is True
+    second = await _ask(agent_mod, Session, 'Понял, спасибо. Тогда жду.')
+    assert second['escalate'] is False
+    assert WAITING_ANSWER in second['answer']
+
+
+@pytest.mark.asyncio
 async def test_waiting_reply_does_not_hand_over_again(flow, monkeypatch):  # noqa: F811
     captured, agent_mod, Session = flow
     captured['reply'] = 'Передаю обращение команде для проверки, подождите, пожалуйста.'
