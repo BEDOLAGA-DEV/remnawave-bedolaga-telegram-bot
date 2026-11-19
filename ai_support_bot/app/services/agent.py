@@ -151,6 +151,39 @@ def _store_claimed(evidence: str) -> bool:
     return bool(_STORE_CLAIM.search(evidence))
 
 
+# «Ок, жду» after a handoff: the team already has it; a second handoff only duplicates the ticket.
+_ACK_WORDS = frozenset({
+    'ок', 'окей', 'ok', 'okay', 'хорошо', 'ладно', 'понял', 'поняла', 'поняли', 'понятно', 'ясно', 'спасибо', 'спс',
+    'благодарю', 'жду', 'подожду', 'ждать', 'буду', 'ждём', 'ждем', 'ага', 'угу', 'да', 'тогда', 'вас', 'большое',
+    'пожалуйста', 'очень', 'без', 'проблем', 'дальше', 'я', 'ну', 'thanks', 'thank', 'you', 'wait', 'will',
+})
+WAITING_ANSWER = 'Обращение уже у команды — ответят здесь, в этом чате. Если появятся подробности, просто напишите.'
+WAITING_ANSWER_EN = 'Your request is already with the team — they will reply here. If anything changes, just write.'
+
+
+def _waiting_after_handoff(question: str, history: list) -> bool:
+    last = next((item.content or '' for item in reversed(history) if item.role == 'assistant'), '')
+    if not re.search(r'Передаю|Уточняю этот вопрос|уже у команды|уже передано', last):
+        return False
+    text = (question or '').strip().casefold()
+    words = re.findall(r'[а-яёa-z]+', text)
+    return bool(words) and '?' not in text and len(text) <= 80 and all(word in _ACK_WORDS for word in words)
+
+
+# The client writes in another language: the answer follows them.
+def _foreign_language(question: str) -> bool:
+    return not re.search(r'[а-яё]', question or '', re.IGNORECASE) and len(re.findall(r'[a-z]{2,}', question or '', re.IGNORECASE)) >= 3
+
+
+# «Сервис пишет: страна не поддерживается» is about ChatGPT, Netflix and the like, not about connecting the VPN.
+_SERVICE_REGION_BLOCK = re.compile(
+    r'(?:стран\w*|регион\w*)\s+(?:\w+\s+){0,2}не\s+поддерж|не\s+поддерж\w*\s+(?:\w+\s+){0,2}(?:стран|регион)'
+    r'|недоступ\w*\s+в\s+(?:вашей|моей|этой|данной)\s+стран|not\s+(?:available|supported)\s+in\s+your\s+(?:country|region)'
+    r'|unsupported\s+(?:country|region)|country\s+(?:is\s+)?not\s+supported',
+    re.IGNORECASE,
+)
+
+
 # Present tense only: «если не поможет — передам» is a promise, not a handoff.
 _HANDOFF_SAID = re.compile(r'\bпереда(?:ю|[её]м)\b[^.!?\n]{0,60}(?:команд|на\s+проверку|специалист|оператор)', re.IGNORECASE)
 # «Работает только с вай-фай»: VPN works somewhere, so the subscription is alive, maybe on another account.
@@ -198,9 +231,7 @@ _HEDGE_RE = re.compile(r'(?:' + '|'.join(_HEDGE_PATTERNS) + r')', re.IGNORECASE)
 
 _FACTUAL_PATTERNS = (
     r'\bцен\w*', r'\bстоим\w*', r'\bстоит\b', r'\bтариф\w*', r'\bруб\w*', r'\bскидк\w*',
-    r'\bсрок\w*', r'\bдней\b', r'\bдата\b', r'\bкогда\b', r'\bсколько\b',
-    r'\bлимит\w*', r'\bустройств\w*', r'\bтрафик\w*', r'\bгб\b',
-    r'\bвозврат\w*', r'\bоплат\w*', r'\bплатеж\w*', r'\bплатёж\w*', r'\bподписк\w*', r'\bбаланс\w*',
+    r'\bсрок\w*', r'\bдата\b', r'\bкогда\b', r'\bвозврат\w*', r'\bлимит\w*', r'\bбаланс\w*',
 )
 _FACTUAL_RE = re.compile(r'(?:' + '|'.join(_FACTUAL_PATTERNS) + r')', re.IGNORECASE)
 
@@ -296,6 +327,11 @@ def looks_hedged(answer_text: str, question: str, knowledge_used: int) -> bool:
     # «Возможно, оператор ограничивает» is ordinary diagnostics for a VPN failure, not a guessed fact.
     if _TECH_COMPLAINT.search(question or ''):
         return False
+    # «Хорошо, сейчас попробую» asks nothing: there is no fact to guess.
+    if '?' not in (question or '') and len(question or '') < 120 and not re.search(
+        r'сколько|почему|как(?:ой|ая|ое|ие|\s)|когда|где|что|зачем|можно|ли\b', question or '', re.IGNORECASE,
+    ):
+        return False
     return bool(_HEDGE_RE.search(answer_text))
 
 
@@ -365,6 +401,7 @@ class SupportAgent:
         navigation: str = '',
         catalog: str = '',
         status: str = '',
+        language: str = '',
     ) -> str:
         configured_prompt = settings_store.get('SYSTEM_PROMPT')
         policy_header = 'Актуальные правила SligVPN (приоритет над устаревшими примерами и настройками промпта):'
@@ -411,6 +448,8 @@ class SupportAgent:
 
         if user_context:
             blocks.append('<user_data>\nДанные текущего пользователя:\n' + user_context + '\n</user_data>')
+        if language:
+            blocks.append(language)
         return '\n\n'.join(blocks)
 
     async def _build_navigation_block(
@@ -578,11 +617,14 @@ class SupportAgent:
             await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
         if switched_question == '' and not image_url:
             direct_answer, direct_kind = 'Напишите ваш новый вопрос.', None
+        if not forced_reason and not direct_answer and not image_url and _waiting_after_handoff(question, history):
+            direct_answer, direct_kind = (WAITING_ANSWER_EN if _foreign_language(question) else WAITING_ANSWER), None
+            smalltalk = False
         if smalltalk and not forced_reason and not direct_answer:
             direct_answer = smalltalk_answer(question)
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
             direct_answer = 'Анализ изображений сейчас отключён. Опишите, что показано на фото, и какую проблему нужно решить.'
-        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED'):
+        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED') and not _SERVICE_REGION_BLOCK.search(question):
             nav_query = build_nav_query(question, history, summary)
             if is_topup_without_renewal(question):
                 surface = navigation_tool.resolve_surface(nav_query)
@@ -661,7 +703,7 @@ class SupportAgent:
         status_block = ''
         if not smalltalk and not forced_reason and not direct_answer:
             navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
-            if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци|устройств|девайс', question, re.IGNORECASE):
+            if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци|устройств|девайс|price|cost|plan|tariff|device|subscription|how\s+much', question, re.IGNORECASE):
                 catalog_block = await self._build_catalog_block(telegram_id)
             # Countries and outages come from live monitoring, not from old tickets.
             recent_user = ' '.join(item.content or '' for item in history[-2:] if item.role == 'user')
@@ -669,7 +711,8 @@ class SupportAgent:
                 status_block = await server_status.build_status_block(question)
 
         system_prompt = self._build_system_prompt(
-            knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block, status=status_block
+            knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block, status=status_block,
+            language='Клиент пишет не по-русски: ответь на его языке (обычно английском). Названия кнопок и разделов оставь как в интерфейсе, в кавычках.' if _foreign_language(question) else '',
         )
         if smalltalk:
             system_prompt = (
@@ -819,7 +862,7 @@ class SupportAgent:
 
         hedged = False
         if not escalate and settings_store.get_bool('HEDGE_ESCALATION'):
-            hedged = looks_hedged(answer_text, question, len(knowledge))
+            hedged = looks_hedged(answer_text, question, len(knowledge) + bool(catalog_block))
             if hedged:
                 escalate = True
                 notice = settings_store.get('ESCALATION_USER_NOTICE')
@@ -872,7 +915,11 @@ class SupportAgent:
         # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
         recent_question = ' '.join([item.content or '' for item in history[-2:] if item.role == 'user'] + [question])
         if not (serious or escalate or renewal_wish or money_case) and not _WORKS_SOMEWHERE.search(recent_question) and (
-            starts_technical_issue(question) or re.search(r'не\s+работа|не\s+подключ', question, re.IGNORECASE)
+            starts_technical_issue(question) or re.search(
+                r'не\s+(?:работа|подключ|устанавлива|грузит|загружа|открыва|соедин)|перестал\w*\s+(?:работ|подключ|грузит|открыва)'
+                r'|сломал|отвалил|stopped\s+working|not\s+working|doesn.?t\s+work|can.?t\s+connect',
+                question, re.IGNORECASE,
+            )
         ):
             context = user_context or await build_user_context(telegram_id)
             if ended := answer_buttons.expired_until(context):

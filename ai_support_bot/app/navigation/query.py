@@ -68,6 +68,9 @@ def navigation_target(query: str) -> str | None:
     text = query.casefold()
     if is_subscription_refresh(query):
         return None
+    # «Сервис пишет, что моя страна не поддерживается» is not a request for the connection page.
+    if re.search(r'(?:стран\w*|регион\w*)\s+(?:\w+\s+){0,2}не\s+поддерж|не\s+поддерж\w*\s+(?:\w+\s+){0,2}(?:стран|регион)', text):
+        return None
     action = device_action(query)
     if action:
         return {'connect': 'subscription_connect', 'expand': 'subscription_add_devices', 'full': 'subscription_manage_devices'}[action]

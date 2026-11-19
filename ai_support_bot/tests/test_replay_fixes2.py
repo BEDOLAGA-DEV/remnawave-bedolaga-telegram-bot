@@ -225,15 +225,34 @@ async def test_cancel_renewal_wish_is_not_mistaken_for_a_renewal(flow):
     'впн работает только с wi-fi. как только переключаешься на сотовые данные, все сервера недоступны. проблема длится уже около недели.',
     'Добрый день!Уже 3 день,у меня переодически не работает впн надолго.Можно ли решить эту проблему?',
     'Нет впн,тест пинга нажимаю все равно всё n\\a и так 3 сутки',
-    'Пробовал через разные приложения. INCY, TrueSlasn, Happ. Везде одинаково не работает. Сеть МТС.',
     'Неделю уже вот такая ситуация, обновляю, но ничего не меняется',
     'Послание пару дней ужасно работает ВПН, много серверов вообще не работают ,а остальные с большим пингом',
-    'Уже всё перепробовала, VPN не подключается',
     'Давно не работает VPN',
     'Несколько дней не грузит ничего через VPN',
 ])
 def test_already_tried_or_long_outage_goes_to_diagnostics(question):
     assert mandatory_handoff(question, []) == 'diagnostics_failed'
+
+
+# Simulation 19.11: «пробовал» in the first message, before any of our steps, gets our steps first.
+FIRST_TRIED = [
+    'Пробовал через разные приложения. INCY, TrueSlasn, Happ. Везде одинаково не работает. Сеть МТС.',
+    'Уже всё перепробовала, VPN не подключается',
+]
+
+
+@pytest.mark.parametrize('question', FIRST_TRIED)
+def test_first_already_tried_gets_our_steps_first(question):
+    assert mandatory_handoff(question, []) is None
+
+
+@pytest.mark.parametrize('question', FIRST_TRIED + ['Не помогло, всё так же'])
+def test_already_tried_after_our_steps_goes_to_diagnostics(question):
+    from types import SimpleNamespace
+
+    history = [SimpleNamespace(role='user', content='VPN не работает'),
+               SimpleNamespace(role='assistant', content='Смените сервер в приложении и обновите подписку в приложении.')]
+    assert mandatory_handoff(question, history) == 'diagnostics_failed'
 
 
 @pytest.mark.parametrize('question', [

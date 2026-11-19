@@ -340,6 +340,10 @@ _LONG_OUTAGE = re.compile(
     r'|(?:второй|третий|четв[её]ртый|пятый)\s+день|(?:целый|весь)\s+день|(?:уже|больше|более|почти|целый)\s+месяц\w*'
     r'|давно\s+(?:уже\s+)?не\s+(?:работа|подключ|грузит|открыва)'
 )
+_PROMISE = re.compile(
+    r'попробую|попробуем|сейчас\s+(?:сделаю|поменяю|проверю|попробую|гляну)|(?<![а-яё])щас(?![а-яё])|посмотрю|отпишусь|напишу',
+    re.IGNORECASE,
+)
 _TECH_FAILURE = re.compile(
     r'не\s+работа\w*|не\s+подключ\w*|не\s+грузит|не\s+загружа\w*|не\s+открыва\w*|не\s+заработал\w*|недоступн\w*'
     r'|(?:плохо|ужасно)\s+работа\w*|нет\s+интернет\w*|\bn[\\/]a\b|н/д'
@@ -364,15 +368,30 @@ def diagnostics_exhausted(question: str, history: list) -> bool:
     # Payments have their own checks; a client missing from the App Store gets the region instructions.
     if re.search(r'плат[её]ж|оплат|попол|деньг|списал|чек\b|app\s*store|апп?\s*стор|аппстор|эпп\s*стор|google\s*play|плей\s*маркет', text):
         return False
-    if _TECH_FAILURE.search(text) and (_TRIED.search(text) or _LONG_OUTAGE.search(text)):
+    tried = bool(_TRIED.search(text) or re.search(r'та\s+же\s+(?:ошибк|тема|проблем)|то\s+же\s+самое|вс[её]\s+так\s+же', text))
+    if _LONG_OUTAGE.search(text) and (_TECH_FAILURE.search(text) or tried):
         return True
-    if _TRIED.search(text) and _LONG_OUTAGE.search(text):
-        return True
-    previous = next((getattr(item, 'content', '') or '' for item in reversed(history) if item.role == 'assistant'), '')
-    return basic_steps_given(previous) and bool(_TECH_FAILURE.search(text) or _TRIED.search(text) or re.search(r'та\s+же\s+ошибк|то\s+же\s+самое', text))
+    # «Попробую щас, если не ок — напишу»: a promise to try is not a failed attempt.
+    if _PROMISE.search(text) and not tried:
+        return False
+    steps_given = any(item.role == 'assistant' and basic_steps_given(getattr(item, 'content', '') or '') for item in history[-6:])
+    if tried:
+        # «Пробовал переподключаться» before any of our steps: give them first; «сменил сервер, обновил» counts as done.
+        return steps_given or basic_steps_given(text)
+    # A bare «не работает» right after our steps; a longer message describes the problem and gets an answer.
+    return steps_given and bool(_TECH_FAILURE.search(text)) and len(text) <= 40
+
+
+def guarantee_question(question: str) -> bool:
+    text = (question or '').casefold()
+    hypothetical = re.search(r'гаранти|если\s+(?:вдруг\s+|у\s+меня\s+)?(?:\w+\s+)?не\s+(?:заработа|подойд|понрав|будет\s+работ)', text)
+    claim = re.search(r'верните|вернуть\s+(?:мне\s+)?деньги\s+за|оформ\w*\s+возврат|хочу\s+(?:вернуть|возврат)|оплатил|купил|списал', text)
+    return bool(hypothetical) and not claim
 
 
 def mandatory_handoff(question: str, history: list) -> str | None:
+    if guarantee_question(question):
+        return None
     text = question.casefold()
     recent_user = ' '.join(getattr(item, 'content', '') or '' for item in history[-6:] if item.role == 'user')
     payment_context = text + ' ' + recent_user.casefold()
@@ -585,8 +604,8 @@ _PLATFORMS = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad
 _REGION_HELP_MARK = 'сменить регион Apple Account'
 _SHADOWROCKET = re.compile(r'shadow\s*rocket|ш[аэ]д[оа]у?\s*рокет', re.IGNORECASE)
 SHADOWROCKET_ANSWER = (
-    'Для подключения используйте Happ или Incy. Если на iPhone их не получается установить без смены региона Apple ID, '
-    'подойдёт Streisand. Затем добавьте в приложение ссылку своей подписки.'
+    'Shadowrocket с нашей подпиской не работает. Для подключения используйте Happ или Incy. Если на iPhone их не '
+    'получается установить без смены региона Apple ID, подойдёт Streisand. Затем добавьте в приложение ссылку своей подписки.'
 )
 
 
@@ -618,7 +637,9 @@ def store_alternatives_answer(question: str = '') -> str:
 def apps_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
-    if _SHADOWROCKET.search(text) and re.search(r'не\s|ошибк|поддерж|можно|подойд|подход|работа|подключ|\?', text):
+    shadowrocket_told = any(item.role == 'assistant' and 'Shadowrocket с нашей подпиской не работает' in (getattr(item, 'content', '') or '')
+                            for item in history)
+    if _SHADOWROCKET.search(text) and re.search(r'не\s|ошибк|поддерж|можно|подойд|подход|работа|подключ|\?', text) and not shadowrocket_told:
         return SHADOWROCKET_ANSWER
     store_context = bool(re.search(_STORE + r'|iphone|ipad|ios|айфон|айпад', text + ' ' + previous))
     app_word = r'\b(?:' + _APP_NAME + r')\b|приложени\w*|(?:' + _STORE + r')\w*'
