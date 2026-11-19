@@ -167,10 +167,40 @@ def test_a_service_region_block_is_not_the_connection_page(question):
     assert navigation_target(question) is None
 
 
+@pytest.mark.parametrize('question', [
+    'ок, ща попробую', 'Понял, спасибо. Тогда продлю через кнопку.', 'Thanks, that’s clear now.',
+    'Got it, thanks. That’s enough for now.', 'Спасибо вам\nЯ сейчас посмотрю\nЕсли что еще спрошу',
+    'ок, щас переключу и перезапущу. если не поможет — напишу.',
+])
+def test_acknowledgements_are_recognised(question):
+    from ai_support_bot.app.services.agent import _acknowledgement
+
+    assert _acknowledgement(question)
+
+
+@pytest.mark.parametrize('question', [
+    'Понял, спасибо. А если не зайдёт, возврат реально рассматривают?', 'ок, попробовал — не помогло',
+    'Спасибо, но всё равно ошибка', 'Почему так медленно?', 'Хочу продлить подписку',
+])
+def test_questions_and_complaints_are_not_acknowledgements(question):
+    from ai_support_bot.app.services.agent import _acknowledgement
+
+    assert not _acknowledgement(question)
+
+
+@pytest.mark.asyncio
+async def test_acknowledgement_gets_a_short_reply_without_a_handoff(flow):  # noqa: F811
+    captured, agent_mod, Session = flow
+    captured['reply'] = ''  # the model returns nothing to «ок, ща попробую»
+    result = await _ask(agent_mod, Session, 'ок, ща попробую')
+    assert result['escalate'] is False
+    assert 'напишите сюда' in result['answer']
+
+
 def test_policy_covers_the_simulation_findings():
     for text in ('отвечай на языке клиента', 'Подписка закончилась: если в данных аккаунта подписка истекла',
                  'до 5 — Стандарт, 6–10 — Семейный', '«Добавить в Happ»', '«Страна не поддерживается»',
                  'доставку писем ты проверить не можешь', 'Не видно сервера в списке',
-                 'не передавай обращение повторно'):
+                 'не передавай обращение повторно', 'Счёт на юрлицо'):
         assert text in SUPPORT_POLICY, text
     assert SUPPORT_POLICY.strip().splitlines()[-1].startswith('Отвечай кратко')

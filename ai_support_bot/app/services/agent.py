@@ -170,6 +170,31 @@ def _waiting_after_handoff(question: str, history: list) -> bool:
     return bool(words) and '?' not in text and len(text) <= 80 and all(word in _ACK_WORDS for word in words)
 
 
+# «Ок, ща попробую», «понял, спасибо, продлю через кнопку»: the model often returns nothing to such a message,
+# and an empty answer turns into a handoff. The code answers it instead.
+_ACK_START = re.compile(
+    r'^\W*(?:ок(?:ей)?|окей|ok(?:ay)?|понял[аи]?|поняла|понятно|ясно|спасибо|спс|благодарю|хорошо|ладно|ага|угу|супер|'
+    r'отлично|got\s+it|thanks|thank\s+you|а,?\s*понял)', re.IGNORECASE,
+)
+_ACK_PROMISE = re.compile(
+    r'попробую|сделаю|гляну|проверю|напишу|отпишусь|продлю|подожду|посмотрю|переключу|перезапущу|поставлю|скачаю|'
+    r'подключу|оформлю|пришлю|щас|сейчас|\bwait\b|\btry\b|\bcheck\b|\bwill\b|enough', re.IGNORECASE,
+)
+_ACK_PROBLEM = re.compile(
+    r'не\s+(?:работает|работают|помогло|помогает|получилось|получается|подключается|открывается|грузит)|ошибк|\?',
+    re.IGNORECASE,
+)
+ACK_ANSWER = 'Хорошо! Если что-то не получится — напишите сюда, разберёмся.'
+ACK_ANSWER_EN = 'Sounds good! If anything doesn’t work, just write here.'
+
+
+def _acknowledgement(question: str) -> bool:
+    text = (question or '').strip()
+    if not text or len(text) > 200 or not _ACK_START.match(text) or _ACK_PROBLEM.search(text):
+        return False
+    return len(text) <= 40 or bool(_ACK_PROMISE.search(text))
+
+
 # The client writes in another language: the answer follows them.
 def _foreign_language(question: str) -> bool:
     return not re.search(r'[а-яё]', question or '', re.IGNORECASE) and len(re.findall(r'[a-z]{2,}', question or '', re.IGNORECASE)) >= 3
@@ -629,6 +654,9 @@ class SupportAgent:
             smalltalk = False
         if smalltalk and not forced_reason and not direct_answer:
             direct_answer = smalltalk_answer(question)
+        payment_flow = support_state.get('renewal_verification') or support_state.get('issue') in {'payment_activation', 'payment_missing'}
+        if not forced_reason and not direct_answer and not image_url and not payment_flow and _acknowledgement(question):
+            direct_answer, direct_kind = (ACK_ANSWER_EN if _foreign_language(question) else ACK_ANSWER), None
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
             direct_answer = 'Анализ изображений сейчас отключён. Опишите, что показано на фото, и какую проблему нужно решить.'
         if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED') and not _SERVICE_REGION_BLOCK.search(question):
