@@ -124,7 +124,6 @@ _CSS = """
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:#0a0e0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e8efec;-webkit-font-smoothing:antialiased}
 .card{max-width:460px;margin:12px auto 20px;padding:18px 20px 16px;background:#141917;border:1px solid #232b28;border-top:3px solid var(--accent,#25c268);border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.36)}
-.brand{font-size:15px;font-weight:700;color:#e8efec;letter-spacing:-.2px;margin-bottom:14px}
 h1{margin:0 0 4px;font-size:22px;font-weight:600;color:#fff;letter-spacing:-.3px}
 h2{margin:18px 0 8px;font-size:13px;font-weight:500;color:#8b9995}
 p{margin:0;font-size:15px;line-height:1.55}
@@ -174,7 +173,6 @@ def _html_response(
 </head>
 <body>
   <div class="card" style="--accent:{accent}">
-    <div class="brand">{_service_name()}</div>
     {inner}
     <p class="foot">&copy; {_service_name()}</p>
   </div>
