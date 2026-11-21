@@ -68,8 +68,10 @@ RENEW_UPSELL_TARIFF_ID = 2
 _SUPPORT_TG_URL = 'https://t.me/SligVPNHelp'
 _SITE_URL = 'https://web.slig.app'
 
-# Период-«хит»: помечается бейджем ХИТ и выбран по умолчанию (если есть среди периодов).
+# Период-«хит»: помечается бейджем ХИТ (если есть среди периодов).
 RENEW_HIT_PERIOD_DAYS = 180
+# Период, выбранный по умолчанию при открытии страницы (если есть среди периодов).
+RENEW_DEFAULT_PERIOD_DAYS = 90
 
 # Публичный путь эндпоинтов за прокси кабинета (как у отписки: CABINET_URL + /api/cabinet/public/...).
 PUBLIC_RENEW_PATH = '/api/cabinet/public/renew'
@@ -120,16 +122,16 @@ def _period_label(days: int) -> str:
 
 _CSS = """
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:radial-gradient(1100px 520px at 50% -8%,rgba(37,194,104,.14),transparent 62%),#0a0e0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e8efec;-webkit-font-smoothing:antialiased}
-.card{max-width:460px;margin:6vh auto;padding:24px 22px 18px;background:linear-gradient(180deg,#141a17,#0f1413);border:1px solid #232b28;border-top:3px solid var(--accent,#25c268);border-radius:20px;box-shadow:0 24px 70px rgba(0,0,0,.45)}
-.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:#cfe9db;margin-bottom:18px}
+body{margin:0;min-height:100vh;background:radial-gradient(760px 260px at 50% 0,rgba(37,194,104,.12),transparent 60%),#0a0e0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e8efec;-webkit-font-smoothing:antialiased}
+.card{max-width:460px;margin:12px auto 20px;padding:18px 20px 16px;background:linear-gradient(180deg,#141a17,#0f1413);border:1px solid #232b28;border-top:3px solid var(--accent,#25c268);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:#cfe9db;margin-bottom:13px}
 .brand .dot{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,#25c268,#149a52);display:grid;place-items:center;font-size:16px;box-shadow:0 4px 14px rgba(37,194,104,.35)}
 h1{margin:0 0 4px;font-size:22px;font-weight:700;color:#fff;letter-spacing:-.3px}
-h2{margin:22px 0 10px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8b9995}
+h2{margin:16px 0 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8b9995}
 p{margin:0;font-size:15px;line-height:1.55}
 .muted{color:#8b9995;font-size:13px}
 .banner{margin:14px 0 2px;padding:11px 13px;border-radius:12px;background:rgba(37,194,104,.1);border:1px solid rgba(37,194,104,.28);color:#8fe9b0;font-size:13px;font-weight:600}
-.opt{display:flex;align-items:center;gap:12px;padding:14px;margin:0 0 9px;border:1px solid #232b28;border-radius:14px;cursor:pointer;font-size:15px;transition:border-color .15s,background .15s}
+.opt{display:flex;align-items:center;gap:12px;padding:12px 13px;margin:0 0 8px;border:1px solid #232b28;border-radius:13px;cursor:pointer;font-size:15px;transition:border-color .15s,background .15s}
 .opt:hover{border-color:#2f6b4c}
 .opt:has(input:checked){border-color:#25c268;background:rgba(37,194,104,.08)}
 .opt input{accent-color:#25c268;width:18px;height:18px;margin:0;flex:none}
@@ -140,7 +142,7 @@ p{margin:0;font-size:15px;line-height:1.55}
 .badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:rgba(37,194,104,.16);color:#64dd98;font-size:11px;font-weight:700;vertical-align:middle}
 .badge-hit{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#25c268;color:#06120b;font-size:11px;font-weight:800;letter-spacing:.3px;vertical-align:middle}
 .opt .label .save{font-size:12px;color:#64dd98;font-weight:600}
-button{width:100%;margin-top:20px;border:0;border-radius:13px;padding:15px 20px;font-size:16px;font-weight:700;color:#06120b;background:linear-gradient(135deg,#2bd275,#16a757);cursor:pointer;box-shadow:0 10px 26px rgba(37,194,104,.3)}
+button{width:100%;margin-top:16px;border:0;border-radius:13px;padding:14px 20px;font-size:16px;font-weight:700;color:#06120b;background:linear-gradient(135deg,#2bd275,#16a757);cursor:pointer;box-shadow:0 10px 26px rgba(37,194,104,.3)}
 button:hover{filter:brightness(1.06)}
 .pm-icon{flex:none;width:26px;height:26px;display:grid;place-items:center;color:#7fe3a6}
 .pm-icon svg{width:23px;height:23px;display:block}
@@ -607,8 +609,8 @@ async def renew_page(
         heading = html.escape(tariff.name) if tariff is not None else 'Продление подписки'
         highlighted = tariff.highlight_period_days if tariff is not None else None
     period_values = [p for p, _ in periods]
-    if RENEW_HIT_PERIOD_DAYS in period_values:
-        selected_period = RENEW_HIT_PERIOD_DAYS  # «хит» выбран по умолчанию
+    if RENEW_DEFAULT_PERIOD_DAYS in period_values:
+        selected_period = RENEW_DEFAULT_PERIOD_DAYS  # по умолчанию — 3 месяца
     else:
         selected_period = next((p for p, _ in periods if p == highlighted), periods[0][0])
 
