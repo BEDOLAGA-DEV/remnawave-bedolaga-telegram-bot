@@ -28,7 +28,8 @@ def test_personal_link_and_subscription_pages_come_from_customer_data():
 
     assert rows == [
         [{'text': 'Моя подписка', 'url': 'https://connect.sligvpn.ru/AbC123', 'style': 'primary'}],
-        [{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/57923/renew', 'style': 'success'}],
+        # Since 21.11 the renew button opens the payment page of this subscription, by the code from its link.
+        [{'text': 'Продлить подписку', 'url': f'{SITE}/api/cabinet/public/renew/AbC123', 'style': 'success'}],
     ]
 
 

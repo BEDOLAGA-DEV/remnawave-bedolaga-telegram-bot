@@ -6,6 +6,8 @@ from ai_support_bot.app.services.telegram_html import is_allowed_link
 
 SITE = 'https://web.slig.app'
 BOT_LINK = 'https://t.me/SligVPN_bot?start=ai_support'
+# Payment page of one subscription by the code from its link: no bot, no cabinet login; a trial gets the Standard plan.
+RENEW_PAGE = f'{SITE}/api/cabinet/public/renew/'
 MAX_BUTTONS = 2
 
 # Blue opens the customer's own things, green leads to a payment; red is not used on purpose.
@@ -29,6 +31,7 @@ _PAGE_ACTIONS = (
 _MARKER = re.compile(r'[ \t]*\[\[BUTTONS?:([^\]]*)\]\][ \t]*\n?', re.IGNORECASE)
 _SUBSCRIPTION_ID = re.compile(r'подписка №\d+ \(id=(\d+)\)')
 _SUBSCRIPTION_LINK = re.compile(r'ссылка=(https://[^\s,]+)')
+_SUBSCRIPTION_CODE = re.compile(r'подписка №\d+ \(id=(\d+)\)[^\n]*?ссылка=https://[^/\s,]+/([A-Za-z0-9_-]{6,64})(?=[\s,]|$)')
 _SITE_LINK = re.compile(re.escape(SITE) + r'(/[\w/:-]*)')
 
 
@@ -42,8 +45,15 @@ def extract(text: str) -> tuple[str, list[str]]:
     return _MARKER.sub('', text or '').strip(), actions
 
 
-def _url(action: str, links: list[str], subscription_ids: list[str]) -> str:
+def renew_page(user_context: str) -> dict[str, str]:
+    """Subscription id → its own renew page, only for subscriptions whose link is in the customer's data."""
+    return {sub_id: RENEW_PAGE + code for sub_id, code in _SUBSCRIPTION_CODE.findall(user_context or '')}
+
+
+def _url(action: str, links: list[str], subscription_ids: list[str], pages: dict[str, str] | None = None) -> str:
     single = subscription_ids[0] if len(subscription_ids) == 1 else None
+    if action == 'renew' and single and (pages or {}).get(single):
+        return pages[single]
     return {
         'subscription': links[0] if len(links) == 1 else f'{SITE}/subscriptions',
         'connect': f'{SITE}/connection',
@@ -61,10 +71,11 @@ def build(actions: list[str], user_context: str = '') -> list[list[dict]]:
     """One button per row; the personal subscription link is taken only from the customer's own data."""
     links = _SUBSCRIPTION_LINK.findall(user_context or '')
     subscription_ids = _SUBSCRIPTION_ID.findall(user_context or '')
+    pages = renew_page(user_context)
     rows = []
     for action in actions[:MAX_BUTTONS]:
         label, style = ACTIONS[action]
-        url = _url(action, links, subscription_ids)
+        url = _url(action, links, subscription_ids, pages)
         if not is_allowed_link(url):
             continue
         rows.append([{'text': label, 'url': url, **({'style': style} if style else {})}])
@@ -80,12 +91,21 @@ def renew_buttons(user_context: str) -> list[list[dict]]:
     Nothing is offered when no subscription could be read: «buy» must not be shown to someone who has one.
     """
     found = _SUBSCRIPTION_LINE.findall(user_context or '')
+    pages = renew_page(user_context)
     subscriptions = [(number, sub_id, end) for number, sub_id, trial, end in found if trial == 'нет']
     if not subscriptions:
+        trials = [sub_id for _, sub_id, trial, _ in found if trial == 'да']
+        if len(trials) == 1 and pages.get(trials[0]):
+            # The renew page moves a trial to the paid Standard plan in one payment.
+            return [[{'text': ACTIONS['buy'][0], 'url': pages[trials[0]], 'style': 'success'}]]
         return build(['buy']) if found or 'Подписки: отсутствуют' in (user_context or '') else []
+
+    def url(sub_id):
+        return pages.get(sub_id) or f'{SITE}/subscriptions/{sub_id}/renew'
+
     if len(subscriptions) == 1:
-        return [[{'text': 'Продлить подписку', 'url': f'{SITE}/subscriptions/{subscriptions[0][1]}/renew', 'style': 'success'}]]
-    return [[{'text': f'Продлить №{number} · до {end}', 'url': f'{SITE}/subscriptions/{sub_id}/renew', 'style': 'success'}]
+        return [[{'text': 'Продлить подписку', 'url': url(subscriptions[0][1]), 'style': 'success'}]]
+    return [[{'text': f'Продлить №{number} · до {end}', 'url': url(sub_id), 'style': 'success'}]
             for number, sub_id, end in subscriptions[:MAX_BUTTONS]]
 
 
@@ -106,8 +126,14 @@ def expired_until(user_context: str) -> tuple[str, bool] | None:
 
 def renew_answer(rows: list[list[dict]]) -> str:
     """Short text under renew buttons: no menu path to read, no «write 1 or 2»."""
+    direct = bool(rows) and all(row[0]['url'].startswith(RENEW_PAGE) for row in rows)
     if rows and rows[0][0]['text'] == ACTIONS['buy'][0]:
-        return 'Оформить подписку можно по кнопке ниже.'
+        return ('Оформить подписку можно по кнопке ниже — оплата сразу на сайте, без бота.' if direct
+                else 'Оформить подписку можно по кнопке ниже.')
+    if direct:
+        return ('Продлить можно по кнопке ниже — оплата сразу на сайте, без бота, в том числе заранее. '
+                + ('Выберите нужную подписку. ' if len(rows) > 1 else '')
+                + 'В приложении Happ на странице подписки тоже есть кнопка «Продлить».')
     if len(rows) > 1:
         return 'Выберите подписку на кнопке ниже — продлить можно и заранее, пока она активна.'
     return 'Продлить можно по кнопке ниже — в том числе заранее, пока подписка активна.'
@@ -137,7 +163,7 @@ def page_actions(answer: str) -> list[str]:
     """Rule answers already name a cabinet page; offer it as a button."""
     for match in _SITE_LINK.finditer(answer or ''):
         path = match.group(1)
-        if re.match(r'/subscriptions/\d+/renew', path):
+        if re.match(r'/subscriptions/\d+/renew|/api/cabinet/public/renew/', path):
             return ['renew']
         for prefix, action in _PAGE_ACTIONS:
             if path.startswith(prefix):
