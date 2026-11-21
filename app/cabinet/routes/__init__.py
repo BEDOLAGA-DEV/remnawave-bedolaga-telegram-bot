@@ -70,6 +70,7 @@ from .partner_application import router as partner_application_router
 from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
+from .public_renew import router as public_renew_router
 from .referral import router as referral_router
 from .reminders import router as reminders_router
 from .site_verification import router as site_verification_router
@@ -96,6 +97,8 @@ router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 router.include_router(site_verification_router)
 # Отписка от рассылок — тоже без авторизации: по ссылке ходят почтовые клиенты.
 router.include_router(unsubscribe_router)
+# Продление подписки по веб-ссылке (без Telegram и без входа): /cabinet/public/renew/{short_uuid}.
+router.include_router(public_renew_router)
 
 # Include all sub-routers
 router.include_router(auth_router)

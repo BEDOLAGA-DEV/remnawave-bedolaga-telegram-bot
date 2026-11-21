@@ -34,7 +34,9 @@ from app.services.guest_purchase_service import (
     activate_purchase as activate_guest_purchase,
     create_purchase,
     evaluate_guest_purchase_registration,
+    resolve_landing_payment_method,
     validate_and_calculate,
+    validate_payment_amount_limits,
 )
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
@@ -835,41 +837,14 @@ async def create_landing_purchase(
             detail='Gift purchases are not enabled for this landing page',
         )
 
-    # Validate payment method is available on this landing.
-    # The frontend may send a suffixed method ID (e.g. "platega_2", "yookassa_sbp")
-    # to select a specific sub-option. We match against the base method_id and
-    # validate the suffix against known & enabled sub-options.
-    raw_methods = landing.payment_methods or []
-    method_defaults = _get_method_defaults()
-
-    method_config = next((m for m in raw_methods if m.get('method_id') == body.payment_method), None)
-    if method_config is None:
-        # Try matching by prefix: "platega_2" → base "platega"
-        # Sort by length descending so "freekassa_sbp" is checked before "freekassa"
-        sorted_methods = sorted(raw_methods, key=lambda m: len(m.get('method_id', '')), reverse=True)
-        for m in sorted_methods:
-            mid = m.get('method_id', '')
-            if body.payment_method.startswith(mid + '_'):
-                suffix = body.payment_method[len(mid) + 1 :]
-                # Validate suffix is a known sub-option
-                method_def = method_defaults.get(mid)
-                available = (method_def.get('available_sub_options') if method_def else None) or []
-                valid_ids = {opt['id'] for opt in available}
-                if mid == 'platega':
-                    valid_ids.update({'recurrent', 'sbp_recurrent', '6'})
-                if suffix not in valid_ids:
-                    break  # invalid suffix → reject
-                # Validate suffix is enabled on this landing
-                raw_sub_options = m.get('sub_options')  # dict[str, bool] | None
-                if raw_sub_options is not None and not raw_sub_options.get(suffix, True):
-                    break  # disabled sub-option → reject
-                method_config = m
-                break
-    if method_config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Payment method is not available on this landing page',
-        )
+    # Validate payment method is available on this landing (shared with the web
+    # renewal flow). The frontend may send a suffixed method ID (e.g. "platega_2",
+    # "yookassa_sbp") to select a specific sub-option; the helper matches the base
+    # method_id and validates the suffix against known & enabled sub-options.
+    try:
+        method_config = resolve_landing_payment_method(landing.payment_methods, body.payment_method)
+    except GuestPurchaseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     # Validate tariff + period + calculate price
     try:
@@ -885,18 +860,10 @@ async def create_landing_purchase(
         )
 
     # Validate amount against per-method min/max limits (before creating purchase record)
-    min_amount = method_config.get('min_amount_kopeks')
-    max_amount = method_config.get('max_amount_kopeks')
-    if min_amount is not None and amount_kopeks < min_amount:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Amount is below the minimum ({settings.format_price(min_amount)}) for this payment method',
-        )
-    if max_amount is not None and amount_kopeks > max_amount:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Amount exceeds the maximum ({settings.format_price(max_amount)}) for this payment method',
-        )
+    try:
+        validate_payment_amount_limits(method_config, amount_kopeks)
+    except GuestPurchaseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     # A non-gift landing purchase would create or revive the recipient after
     # payment. Enforce the current policy before creating any payment record;

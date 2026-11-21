@@ -5004,7 +5004,7 @@ class GuestPurchase(Base):
     is_gift = Column(Boolean, nullable=False, default=False)
     source = Column(
         String(20), nullable=False, default='landing', server_default='landing'
-    )  # 'landing', 'cabinet', 'bot'
+    )  # 'landing', 'cabinet', 'bot', 'renew'
     buyer_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     gift_recipient_type = Column(String(20), nullable=True)
     gift_recipient_value = Column(String(255), nullable=True)
@@ -5039,9 +5039,18 @@ class GuestPurchase(Base):
     # Идемпотентность покупки (checkout id / idempotency key). Уникальный
     # индекс ux_guest_purchases_idempotency_key предотвращает повторные списания.
     idempotency_key = Column(String(64), nullable=True)
+    # source == 'renew': подписка, которую нужно продлить после оплаты по веб-ссылке
+    # (/cabinet/public/renew/{short_uuid}). Для остальных покупок всегда NULL.
+    # Без ondelete: платёж за продление не должен молча «осиротеть» при удалении подписки.
+    renew_subscription_id = Column(Integer, ForeignKey('subscriptions.id'), nullable=True)
+    # source == 'renew' + апселл триала: тариф, на который переводится подписка после оплаты
+    # (триал на мёртвом тарифе продлить нечем — ведём на платный, напр. ⭐Стандарт). Для
+    # обычного продления на текущем тарифе всегда NULL — тогда работает ветка finalize.
+    renew_target_tariff_id = Column(Integer, ForeignKey('tariffs.id'), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
-    tariff = relationship('Tariff', lazy='selectin')
+    # Два FK на tariffs (tariff_id + renew_target_tariff_id) — отношение привязываем к tariff_id явно.
+    tariff = relationship('Tariff', foreign_keys='GuestPurchase.tariff_id', lazy='selectin')
     user = relationship('User', foreign_keys=[user_id], lazy='selectin')
     buyer = relationship('User', foreign_keys=[buyer_user_id], lazy='selectin')
 

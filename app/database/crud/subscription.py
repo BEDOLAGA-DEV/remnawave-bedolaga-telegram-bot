@@ -22,6 +22,7 @@ from app.database.models import (
     Transaction,
     TransactionType,
     User,
+    UserPromoGroup,
     UserStatus,
 )
 from app.utils.subscription_time import ends_within_days
@@ -3390,6 +3391,34 @@ async def get_subscription_by_id(db: AsyncSession, subscription_id: int) -> Subs
         .where(Subscription.id == subscription_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_subscription_by_remnawave_short_uuid(db: AsyncSession, short_uuid: str) -> Subscription | None:
+    """Get subscription by its Remnawave short UUID (public renewal link identifier).
+
+    ``remnawave_short_uuid`` is indexed but NOT unique, so ``.first()`` with a
+    deterministic order is used. No ownership check: the caller is a public
+    endpoint where the short UUID itself is the bearer secret.
+
+    The owner's promo groups are eager-loaded: ``pricing_engine`` silently
+    treats an unloaded ``promo_group`` as «no discount», so lazy loading here
+    would produce wrong prices instead of an error.
+    """
+    if not short_uuid:
+        return None
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user)
+            .selectinload(User.user_promo_groups)
+            .selectinload(UserPromoGroup.promo_group),
+            selectinload(Subscription.user).selectinload(User.promo_group),
+            selectinload(Subscription.tariff),
+        )
+        .where(Subscription.remnawave_short_uuid == short_uuid)
+        .order_by(Subscription.id)
+    )
+    return result.scalars().first()
 
 
 async def get_subscription_by_user_and_tariff(

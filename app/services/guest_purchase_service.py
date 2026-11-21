@@ -231,10 +231,116 @@ async def validate_and_calculate(
     return tariff, price_kopeks
 
 
+# Методы оплаты, чей платёж невозможно завершить в обычном браузере без Telegram.
+# Для веб-ссылки продления (source='renew') их скрываем и не принимаем: пользователь
+# открывает ссылку именно потому, что Telegram у него недоступен.
+_TELEGRAM_ONLY_PAYMENT_METHODS = ('telegram_stars', 'cryptobot', 'tribute')
+# Суффиксы под-опций Platega, которые создают рекуррентный (привязка карты) платёж.
+_PLATEGA_RECURRENT_SUFFIXES = ('recurrent', 'sbp_recurrent', '6')
+
+
+def is_telegram_only_payment_method(payment_method: str) -> bool:
+    """True для методов, непригодных для веб-оплаты вне Telegram.
+
+    Покрывает: Telegram Stars, CryptoBot (invoice-ссылка открывает Telegram), Tribute
+    и любые рекуррентные варианты Platega (``platega_recurrent``, ``platega_sbp_recurrent``,
+    ``platega_6``, любой ``*_recurrent``). Голый ``platega`` тоже считается рекуррентным,
+    пока включён ``PLATEGA_RECURRENT_ENABLED`` — ровно так его трактует
+    ``PaymentService.create_guest_payment``.
+    """
+    method = (payment_method or '').strip().lower()
+    for base in _TELEGRAM_ONLY_PAYMENT_METHODS:
+        if method == base or method.startswith(base + '_'):
+            return True
+    if method.endswith('_recurrent'):
+        return True
+    if method.startswith('platega'):
+        if method.partition('_')[2] in _PLATEGA_RECURRENT_SUFFIXES:
+            return True
+        if method == 'platega' and settings.is_platega_recurrent_enabled():
+            return True
+    return False
+
+
+def resolve_landing_payment_method(
+    raw_methods: list[dict] | None,
+    payment_method: str,
+    *,
+    exclude_telegram_only: bool = False,
+) -> dict:
+    """Validate that ``payment_method`` is offered by a landing config; return its config dict.
+
+    The client may send a suffixed method ID (e.g. ``platega_2``, ``yookassa_sbp``) to pick a
+    specific sub-option. We match against the base method_id and validate the suffix against
+    the known & enabled sub-options.
+
+    Args:
+        exclude_telegram_only: reject methods that need Telegram (see
+            :func:`is_telegram_only_payment_method`). Used by the web renewal flow.
+
+    Raises:
+        GuestPurchaseError: (400) when the method is not available.
+    """
+    from app.services.payment_method_config_service import _get_method_defaults
+
+    not_available = GuestPurchaseError('Payment method is not available on this landing page')
+
+    if exclude_telegram_only and is_telegram_only_payment_method(payment_method):
+        raise not_available
+
+    methods = raw_methods or []
+    method_defaults = _get_method_defaults()
+
+    method_config = next((m for m in methods if m.get('method_id') == payment_method), None)
+    if method_config is None:
+        # Try matching by prefix: "platega_2" -> base "platega"
+        # Sort by length descending so "freekassa_sbp" is checked before "freekassa"
+        sorted_methods = sorted(methods, key=lambda m: len(m.get('method_id', '')), reverse=True)
+        for m in sorted_methods:
+            mid = m.get('method_id', '')
+            if payment_method.startswith(mid + '_'):
+                suffix = payment_method[len(mid) + 1 :]
+                # Validate suffix is a known sub-option
+                method_def = method_defaults.get(mid)
+                available = (method_def.get('available_sub_options') if method_def else None) or []
+                valid_ids = {opt['id'] for opt in available}
+                if mid == 'platega':
+                    valid_ids.update(_PLATEGA_RECURRENT_SUFFIXES)
+                if suffix not in valid_ids:
+                    break  # invalid suffix -> reject
+                # Validate suffix is enabled on this landing
+                raw_sub_options = m.get('sub_options')  # dict[str, bool] | None
+                if raw_sub_options is not None and not raw_sub_options.get(suffix, True):
+                    break  # disabled sub-option -> reject
+                method_config = m
+                break
+    if method_config is None:
+        raise not_available
+    return method_config
+
+
+def validate_payment_amount_limits(method_config: dict, amount_kopeks: int) -> None:
+    """Validate amount against the per-method min/max limits of a landing method config.
+
+    Raises:
+        GuestPurchaseError: (400) when the amount is outside the configured limits.
+    """
+    min_amount = method_config.get('min_amount_kopeks')
+    max_amount = method_config.get('max_amount_kopeks')
+    if min_amount is not None and amount_kopeks < min_amount:
+        raise GuestPurchaseError(
+            f'Amount is below the minimum ({settings.format_price(min_amount)}) for this payment method'
+        )
+    if max_amount is not None and amount_kopeks > max_amount:
+        raise GuestPurchaseError(
+            f'Amount exceeds the maximum ({settings.format_price(max_amount)}) for this payment method'
+        )
+
+
 async def create_purchase(
     db: AsyncSession,
     landing: LandingPage | None,
-    tariff: Tariff,
+    tariff: Tariff | None,
     period_days: int,
     amount_kopeks: int,
     contact_type: str,
@@ -251,8 +357,16 @@ async def create_purchase(
     buyer_user_id: int | None = None,
     commit: bool = True,
     idempotency_key: str | None = None,
+    renew_subscription_id: int | None = None,
+    renew_target_tariff_id: int | None = None,
 ) -> GuestPurchase:
-    """Create a guest purchase record."""
+    """Create a guest purchase record.
+
+    ``tariff`` may be ``None`` only for ``source='renew'`` purchases of a classic
+    (tariff-less) subscription; ``renew_subscription_id`` is the subscription to extend.
+    ``renew_target_tariff_id`` (renew upsell) is the paid tariff the subscription is
+    switched to after payment; ``None`` means plain renewal on the current tariff.
+    """
     purchase = await create_guest_purchase(
         db,
         commit=commit,
@@ -260,7 +374,7 @@ async def create_purchase(
         referrer=referrer,
         campaign_slug=campaign_slug,
         landing_id=landing.id if landing else None,
-        tariff_id=tariff.id,
+        tariff_id=tariff.id if tariff else None,
         period_days=period_days,
         amount_kopeks=amount_kopeks,
         contact_type=contact_type,
@@ -273,6 +387,8 @@ async def create_purchase(
         source=source,
         buyer_user_id=buyer_user_id,
         idempotency_key=idempotency_key,
+        renew_subscription_id=renew_subscription_id,
+        renew_target_tariff_id=renew_target_tariff_id,
         status=GuestPurchaseStatus.PENDING.value,
     )
 
@@ -281,7 +397,7 @@ async def create_purchase(
         purchase_id=purchase.id,
         token_length=len(purchase.token),
         landing_slug=landing.slug if landing else None,
-        tariff_id=tariff.id,
+        tariff_id=tariff.id if tariff else None,
         period_days=period_days,
         amount_kopeks=amount_kopeks,
         is_gift=is_gift,
@@ -419,6 +535,358 @@ async def _create_nalogo_receipt_for_purchase(
         )
 
 
+async def _fulfill_renew_purchase(db: AsyncSession, purchase: GuestPurchase) -> GuestPurchase:
+    """Fulfill a paid ``source='renew'`` purchase: extend the EXISTING subscription.
+
+    Called from :func:`fulfill_purchase` with the purchase row already locked
+    (``FOR UPDATE``) and in ``PAID`` status. Unlike the landing flow this never
+    creates a user and never parks the purchase as ``PENDING_ACTIVATION``.
+
+    The money has already been taken by the payment gateway, so
+    ``SubscriptionRenewalService.finalize`` runs with ``charge_balance_amount=0``
+    (no balance debit). It extends the subscription, syncs Remnawave, consumes the
+    owner's one-time promo offer (if the price included it) and creates the single
+    ``SUBSCRIPTION_PAYMENT`` transaction, so no transaction is created here.
+
+    Double-extension protection: ``finalize`` commits the extension internally, and a
+    stuck ``PAID`` purchase is retried by ``retry_stuck_paid_purchases``. The purchase is
+    therefore flipped to ``DELIVERED`` in the SAME session before ``finalize`` so that the
+    extension commit and the status commit land together; if ``finalize`` raises, the status
+    is reconciled against the real ``end_date`` (see the ``except`` block).
+
+    Raises:
+        GuestPurchaseError: on any failure that leaves the purchase in ``PAID`` (retried later).
+    """
+    # Апселл триала: вместо продления текущего (часто мёртвого) тарифа подписку
+    # переводят на платный ``renew_target_tariff_id`` — отдельная ветка fulfillment.
+    if purchase.renew_target_tariff_id is not None:
+        return await _fulfill_renew_upsell(db, purchase)
+
+    from dataclasses import replace as dataclass_replace
+
+    from app.database.crud.subscription import get_subscription_by_id
+    from app.database.crud.user import lock_user_for_pricing
+    from app.database.models import Subscription
+    from app.services.pricing_engine import pricing_engine
+    from app.services.subscription_renewal_service import SubscriptionRenewalService
+
+    purchase_id = purchase.id
+    subscription_id = purchase.renew_subscription_id
+    period_days = purchase.period_days
+    paid_amount_kopeks = int(purchase.amount_kopeks)
+
+    if purchase.is_gift:
+        raise GuestPurchaseError('Renewal purchase cannot be a gift', status_code=500)
+    if subscription_id is None:
+        logger.error('Renew purchase has no renew_subscription_id', purchase_id=purchase_id)
+        raise GuestPurchaseError('Renewal purchase has no target subscription', status_code=500)
+
+    subscription = await get_subscription_by_id(db, subscription_id)
+    if subscription is None:
+        logger.error(
+            'Subscription for renew purchase not found',
+            purchase_id=purchase_id,
+            subscription_id=subscription_id,
+        )
+        raise GuestPurchaseError('Subscription to renew not found', status_code=500)
+
+    # Lock the owner (promo-offer state feeds the price) and load promo groups for pricing.
+    user = await lock_user_for_pricing(db, subscription.user_id)
+    user_id = user.id
+
+    pricing = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=user)
+    if pricing.final_total != paid_amount_kopeks:
+        # Price or discount changed between creating the payment link and the webhook.
+        # The user paid exactly purchase.amount_kopeks, so that is what gets booked.
+        logger.warning(
+            'Renew purchase: recalculated price differs from the paid amount',
+            purchase_id=purchase_id,
+            paid_kopeks=paid_amount_kopeks,
+            recalculated_kopeks=pricing.final_total,
+        )
+    pricing = dataclass_replace(pricing, final_total=paid_amount_kopeks)
+
+    tariff_name = subscription.tariff.name if subscription.tariff_id and subscription.tariff else None
+    description = f'Продление подписки на {period_days} дн. (веб-ссылка)' + (
+        f' ({tariff_name})' if tariff_name else ''
+    )
+    payment_method_enum = _resolve_payment_method(purchase.payment_method)
+    old_end_date = subscription.end_date
+
+    # Flip to DELIVERED in the same session BEFORE finalize: its internal commit then
+    # persists the extension and the status atomically (see docstring).
+    purchase.status = GuestPurchaseStatus.DELIVERED.value
+    purchase.user_id = user_id
+    purchase.delivered_at = datetime.now(UTC)
+    await db.flush()
+
+    try:
+        result = await SubscriptionRenewalService().finalize(
+            db,
+            user,
+            subscription,
+            pricing,
+            charge_balance_amount=0,
+            description=description,
+            payment_method=payment_method_enum,
+        )
+    except Exception:
+        await db.rollback()
+        try:
+            current_end = (
+                await db.execute(select(Subscription.end_date).where(Subscription.id == subscription_id))
+            ).scalar_one_or_none()
+        except Exception:
+            logger.critical(
+                'Renew purchase: finalize failed and subscription state could not be checked',
+                purchase_id=purchase_id,
+                subscription_id=subscription_id,
+                exc_info=True,
+            )
+            raise
+
+        extended = current_end is not None and old_end_date is not None and _aware(current_end) != _aware(old_end_date)
+        if extended:
+            # The extension is already committed and something after it failed. Keep DELIVERED,
+            # otherwise retry_stuck_paid_purchases would extend the subscription a second time.
+            await db.execute(
+                update(GuestPurchase)
+                .where(GuestPurchase.id == purchase_id)
+                .values(
+                    status=GuestPurchaseStatus.DELIVERED.value,
+                    user_id=user_id,
+                    delivered_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
+            logger.error(
+                'Renew purchase: finalize raised AFTER the subscription was extended, marked DELIVERED',
+                purchase_id=purchase_id,
+                subscription_id=subscription_id,
+                exc_info=True,
+            )
+            await db.refresh(purchase)
+            return purchase
+
+        # No extension happened: restore PAID (an early step of finalize may have committed
+        # DELIVERED) so the retry can finish the job.
+        await db.execute(
+            update(GuestPurchase)
+            .where(GuestPurchase.id == purchase_id, GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value)
+            .values(status=GuestPurchaseStatus.PAID.value, delivered_at=None)
+        )
+        await db.commit()
+        raise
+
+    await db.refresh(purchase)
+
+    # NPD receipt: the money was received (YooKassa only, see the helper) regardless of delivery.
+    try:
+        await _create_nalogo_receipt_for_purchase(db, purchase, user, result.transaction)
+        await db.refresh(purchase)
+    except Exception:
+        logger.exception('Failed to create NaloGO receipt for renew purchase', purchase_id=purchase_id)
+
+    logger.info(
+        'Renew purchase fulfilled',
+        purchase_id=purchase_id,
+        user_id=user_id,
+        subscription_id=subscription_id,
+        period_days=period_days,
+        amount_kopeks=paid_amount_kopeks,
+    )
+    return purchase
+
+
+async def _fulfill_renew_upsell(db: AsyncSession, purchase: GuestPurchase) -> GuestPurchase:
+    """Fulfill a paid ``source='renew'`` UPSELL: switch the subscription onto the paid
+    target tariff (``renew_target_tariff_id``) and activate it.
+
+    Used when the subscription's own tariff can't be paid (a trial on an inactive tariff).
+    The money already arrived via the gateway, so NO balance is charged — the tariff is
+    applied with ``extend_subscription(tariff_id=...)`` (which converts the trial), the
+    ``SUBSCRIPTION_PAYMENT`` transaction is booked with the gateway method, and Remnawave is
+    synced. This mirrors the bot's tariff-purchase path (not renewal/switch, which reject trials).
+
+    Double-delivery protection mirrors :func:`_fulfill_renew_purchase`: the purchase is flipped
+    to ``DELIVERED`` in the same session BEFORE the conversion so the status and the extension
+    commit together; on failure the status is reconciled against the real tariff/end_date.
+    """
+    from app.database.crud.subscription import extend_subscription, get_subscription_by_id
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.database.crud.transaction import create_transaction
+    from app.database.crud.user import lock_user_for_pricing
+    from app.database.models import Subscription, TransactionType
+    from app.services.pricing_engine import pricing_engine
+    from app.services.subscription_service import SubscriptionService
+
+    purchase_id = purchase.id
+    subscription_id = purchase.renew_subscription_id
+    target_tariff_id = purchase.renew_target_tariff_id
+    period_days = purchase.period_days
+    paid_amount_kopeks = int(purchase.amount_kopeks)
+
+    if purchase.is_gift:
+        raise GuestPurchaseError('Renewal purchase cannot be a gift', status_code=500)
+    if subscription_id is None:
+        logger.error('Renew upsell has no renew_subscription_id', purchase_id=purchase_id)
+        raise GuestPurchaseError('Renewal purchase has no target subscription', status_code=500)
+
+    subscription = await get_subscription_by_id(db, subscription_id)
+    if subscription is None:
+        logger.error(
+            'Subscription for renew upsell not found',
+            purchase_id=purchase_id,
+            subscription_id=subscription_id,
+        )
+        raise GuestPurchaseError('Subscription to renew not found', status_code=500)
+
+    tariff = await get_tariff_by_id(db, target_tariff_id)
+    if tariff is None or not tariff.is_active:
+        logger.error(
+            'Renew upsell target tariff missing or inactive',
+            purchase_id=purchase_id,
+            target_tariff_id=target_tariff_id,
+        )
+        raise GuestPurchaseError('Target tariff not available', status_code=500)
+
+    user = await lock_user_for_pricing(db, subscription.user_id)
+    user_id = user.id
+
+    # Server squads of the target tariff (empty ⇒ all available), as in the bot's tariff buy.
+    squads = list(tariff.allowed_squads or [])
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+    # Log-only recompute: the user paid purchase.amount_kopeks, that is what gets booked.
+    try:
+        pricing = await pricing_engine.calculate_tariff_purchase_price(tariff, period_days, user=user)
+        if pricing.final_total != paid_amount_kopeks:
+            logger.warning(
+                'Renew upsell: recalculated price differs from the paid amount',
+                purchase_id=purchase_id,
+                paid_kopeks=paid_amount_kopeks,
+                recalculated_kopeks=pricing.final_total,
+            )
+    except Exception:
+        logger.warning('Renew upsell: price recompute failed (non-fatal)', purchase_id=purchase_id, exc_info=True)
+
+    payment_method_enum = _resolve_payment_method(purchase.payment_method)
+    description = f'Оформление тарифа «{tariff.name}» на {period_days} дн. (веб-ссылка)'
+    old_end_date = subscription.end_date
+    old_tariff_id = subscription.tariff_id
+
+    # Flip to DELIVERED in the same session BEFORE the switch: extend_subscription's commit
+    # then persists the switch and the status atomically (see docstring).
+    purchase.status = GuestPurchaseStatus.DELIVERED.value
+    purchase.user_id = user_id
+    purchase.delivered_at = datetime.now(UTC)
+    await db.flush()
+
+    try:
+        subscription = await extend_subscription(
+            db,
+            subscription,
+            period_days,
+            tariff_id=tariff.id,
+            traffic_limit_gb=tariff.traffic_limit_gb,
+            device_limit=tariff.device_limit,
+            connected_squads=squads,
+            convert_trial=True,
+            commit=True,
+        )
+    except Exception:
+        await db.rollback()
+        try:
+            row = (
+                await db.execute(
+                    select(Subscription.tariff_id, Subscription.end_date).where(Subscription.id == subscription_id)
+                )
+            ).first()
+        except Exception:
+            logger.critical(
+                'Renew upsell: switch failed and subscription state could not be checked',
+                purchase_id=purchase_id,
+                subscription_id=subscription_id,
+                exc_info=True,
+            )
+            raise
+
+        switched = row is not None and (
+            row.tariff_id == tariff.id
+            or (old_end_date is not None and row.end_date is not None and _aware(row.end_date) != _aware(old_end_date))
+        )
+        if switched:
+            # The switch is already committed and something after it failed. Keep DELIVERED,
+            # otherwise retry_stuck_paid_purchases would convert (and re-extend) a second time.
+            await db.execute(
+                update(GuestPurchase)
+                .where(GuestPurchase.id == purchase_id)
+                .values(
+                    status=GuestPurchaseStatus.DELIVERED.value,
+                    user_id=user_id,
+                    delivered_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
+            logger.error(
+                'Renew upsell: extend raised AFTER the subscription was switched, marked DELIVERED',
+                purchase_id=purchase_id,
+                subscription_id=subscription_id,
+                exc_info=True,
+            )
+            await db.refresh(purchase)
+            return purchase
+
+        # No switch happened: restore PAID so the retry can finish the job.
+        await db.execute(
+            update(GuestPurchase)
+            .where(GuestPurchase.id == purchase_id, GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value)
+            .values(status=GuestPurchaseStatus.PAID.value, delivered_at=None)
+        )
+        await db.commit()
+        raise
+
+    # Booked payment transaction (gateway method, like the renewal/landing flow).
+    try:
+        await create_transaction(
+            db=db,
+            user_id=user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=paid_amount_kopeks,
+            description=description,
+            payment_method=payment_method_enum,
+        )
+    except Exception:
+        # The switch is already committed+DELIVERED; a missing accounting row must not
+        # re-run the conversion. Log and continue.
+        logger.exception('Renew upsell: subscription switched but transaction record failed', purchase_id=purchase_id)
+
+    # Remnawave sync (best-effort; the service queues a retry on panel failure).
+    try:
+        await SubscriptionService().sync_remnawave_user(
+            db, subscription, reset_traffic=True, reset_reason='апселл триала (веб-ссылка)'
+        )
+    except Exception:
+        logger.exception('Renew upsell: Remnawave sync failed (queued for retry)', purchase_id=purchase_id)
+
+    await db.refresh(purchase)
+    logger.info(
+        'Renew upsell fulfilled',
+        purchase_id=purchase_id,
+        user_id=user_id,
+        subscription_id=subscription_id,
+        old_tariff_id=old_tariff_id,
+        new_tariff_id=tariff.id,
+        period_days=period_days,
+        amount_kopeks=paid_amount_kopeks,
+    )
+    return purchase
+
+
 async def fulfill_purchase(
     db: AsyncSession,
     purchase_token: str,
@@ -446,6 +914,11 @@ async def fulfill_purchase(
         return purchase
 
     try:
+        # Web renewal link: extend the existing subscription, no user creation, no
+        # PENDING_ACTIVATION. Must run before the gift / registration-policy logic below.
+        if purchase.source == 'renew':
+            return await _fulfill_renew_purchase(db, purchase)
+
         # Paid gifts are bearer claims. They must stay unbound until a Telegram or
         # web claim proves the recipient; fulfillment must never create a phantom.
         if purchase.is_gift:
@@ -1533,6 +2006,11 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
     if purchase.status != GuestPurchaseStatus.PENDING_ACTIVATION.value:
         raise GuestPurchaseError('Purchase is not pending activation', status_code=400)
+
+    # Web renewal purchases are fulfilled directly by fulfill_purchase() and never reach
+    # PENDING_ACTIVATION; refuse to "activate" one as a new subscription.
+    if purchase.source == 'renew':
+        raise GuestPurchaseError('Renewal purchases cannot be activated', status_code=400)
 
     tariff = await get_tariff_by_id(db, purchase.tariff_id)
     if tariff is None:
