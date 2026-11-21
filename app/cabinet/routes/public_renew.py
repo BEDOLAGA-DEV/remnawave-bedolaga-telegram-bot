@@ -122,33 +122,32 @@ def _period_label(days: int) -> str:
 
 _CSS = """
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:radial-gradient(760px 260px at 50% 0,rgba(37,194,104,.12),transparent 60%),#0a0e0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e8efec;-webkit-font-smoothing:antialiased}
-.card{max-width:460px;margin:12px auto 20px;padding:18px 20px 16px;background:linear-gradient(180deg,#141a17,#0f1413);border:1px solid #232b28;border-top:3px solid var(--accent,#25c268);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
-.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:#cfe9db;margin-bottom:13px}
-.brand .dot{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,#25c268,#149a52);display:grid;place-items:center;font-size:16px;box-shadow:0 4px 14px rgba(37,194,104,.35)}
-h1{margin:0 0 4px;font-size:22px;font-weight:700;color:#fff;letter-spacing:-.3px}
-h2{margin:16px 0 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8b9995}
+body{margin:0;min-height:100vh;background:#0a0e0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e8efec;-webkit-font-smoothing:antialiased}
+.card{max-width:460px;margin:12px auto 20px;padding:18px 20px 16px;background:#141917;border:1px solid #232b28;border-top:3px solid var(--accent,#25c268);border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.36)}
+.brand{font-size:15px;font-weight:700;color:#e8efec;letter-spacing:-.2px;margin-bottom:14px}
+h1{margin:0 0 4px;font-size:22px;font-weight:600;color:#fff;letter-spacing:-.3px}
+h2{margin:18px 0 8px;font-size:13px;font-weight:500;color:#8b9995}
 p{margin:0;font-size:15px;line-height:1.55}
 .muted{color:#8b9995;font-size:13px}
-.banner{margin:14px 0 2px;padding:11px 13px;border-radius:12px;background:rgba(37,194,104,.1);border:1px solid rgba(37,194,104,.28);color:#8fe9b0;font-size:13px;font-weight:600}
+.banner{margin:14px 0 2px;padding:11px 13px;border-radius:12px;background:rgba(37,194,104,.09);border:1px solid rgba(37,194,104,.22);color:#8fe9b0;font-size:13px;font-weight:500}
 .opt{display:flex;align-items:center;gap:12px;padding:12px 13px;margin:0 0 8px;border:1px solid #232b28;border-radius:13px;cursor:pointer;font-size:15px;transition:border-color .15s,background .15s}
-.opt:hover{border-color:#2f6b4c}
-.opt:has(input:checked){border-color:#25c268;background:rgba(37,194,104,.08)}
+.opt:hover{border-color:#2f4a3f}
+.opt:has(input:checked){border-color:#25c268;background:rgba(37,194,104,.07)}
 .opt input{accent-color:#25c268;width:18px;height:18px;margin:0;flex:none}
 .opt .label{display:flex;flex-direction:column;gap:2px;min-width:0}
 .opt .label .sub{font-size:12px;color:#8b9995}
-.opt .price{margin-left:auto;text-align:right;font-weight:700;white-space:nowrap}
+.opt .price{margin-left:auto;text-align:right;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
 .opt .price s{display:block;color:#6f7b77;font-weight:400;font-size:12px}
-.badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:rgba(37,194,104,.16);color:#64dd98;font-size:11px;font-weight:700;vertical-align:middle}
-.badge-hit{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#25c268;color:#06120b;font-size:11px;font-weight:800;letter-spacing:.3px;vertical-align:middle}
-.opt .label .save{font-size:12px;color:#64dd98;font-weight:600}
-button{width:100%;margin-top:16px;border:0;border-radius:13px;padding:14px 20px;font-size:16px;font-weight:700;color:#06120b;background:linear-gradient(135deg,#2bd275,#16a757);cursor:pointer;box-shadow:0 10px 26px rgba(37,194,104,.3)}
-button:hover{filter:brightness(1.06)}
-.pm-icon{flex:none;width:26px;height:26px;display:grid;place-items:center;color:#7fe3a6}
-.pm-icon svg{width:23px;height:23px;display:block}
+.badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:7px;background:rgba(37,194,104,.14);color:#64dd98;font-size:11px;font-weight:500;vertical-align:middle}
+.badge-hit{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:7px;background:#25c268;color:#06120b;font-size:11px;font-weight:600;vertical-align:middle}
+.opt .label .save{font-size:12px;color:#64dd98;font-weight:500}
+button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:14px 20px;font-size:16px;font-weight:600;color:#06120b;background:#25c268;cursor:pointer}
+button:hover{background:#2bd275}
+.pm-icon{flex:none;width:26px;height:26px;display:grid;place-items:center;color:#8b9995}
+.pm-icon svg{width:22px;height:22px;display:block}
 .btn-row{display:flex;gap:10px;margin-top:20px}
-.btn-sec{flex:1;text-align:center;text-decoration:none;padding:12px 10px;border-radius:12px;border:1px solid #2f6b4c;color:#9ff0c0;font-size:14px;font-weight:600;background:rgba(37,194,104,.06)}
-.btn-sec:hover{background:rgba(37,194,104,.13);border-color:#3a8a62}
+.btn-sec{flex:1;text-align:center;text-decoration:none;padding:12px 10px;border-radius:11px;border:1px solid #2a322e;color:#c7d2cd;font-size:14px;font-weight:500;background:rgba(255,255,255,.02)}
+.btn-sec:hover{background:rgba(255,255,255,.05);border-color:#3a443f}
 .foot{margin:20px 0 0;font-size:12px;color:#5f6b67;text-align:center}
 """
 
@@ -175,7 +174,7 @@ def _html_response(
 </head>
 <body>
   <div class="card" style="--accent:{accent}">
-    <div class="brand"><span class="dot">🦎</span>{_service_name()}</div>
+    <div class="brand">{_service_name()}</div>
     {inner}
     <p class="foot">&copy; {_service_name()}</p>
   </div>
@@ -492,7 +491,7 @@ def _period_savings(periods: list[tuple[int, RenewalPricing]]) -> dict[int, int]
 
 
 def _hit_badge(days: int) -> str:
-    return '<span class="badge-hit">ХИТ</span>' if days == RENEW_HIT_PERIOD_DAYS else ''
+    return '<span class="badge-hit">Хит</span>' if days == RENEW_HIT_PERIOD_DAYS else ''
 
 
 def _discount_banner(periods: list[tuple[int, RenewalPricing]]) -> str:
@@ -500,7 +499,7 @@ def _discount_banner(periods: list[tuple[int, RenewalPricing]]) -> str:
     best = max((_discount_pct(p) for _, p in periods), default=0)
     if best <= 0:
         return ''
-    return f'<div class="banner">🎁 Ваша скидка до {best}% уже учтена в ценах ниже</div>'
+    return f'<div class="banner">Ваша скидка до {best}% уже учтена в ценах ниже</div>'
 
 
 # ============ Routes ============
@@ -602,11 +601,11 @@ async def renew_page(
         )
 
     if upsell:
-        heading = html.escape(upsell_tariff.name)
+        heading = html.escape(_strip_lead_emoji(upsell_tariff.name))
         highlighted = upsell_tariff.highlight_period_days
     else:
         tariff = subscription.tariff if subscription.tariff_id else None
-        heading = html.escape(tariff.name) if tariff is not None else 'Продление подписки'
+        heading = html.escape(_strip_lead_emoji(tariff.name)) if tariff is not None else 'Продление подписки'
         highlighted = tariff.highlight_period_days if tariff is not None else None
     period_values = [p for p, _ in periods]
     if RENEW_DEFAULT_PERIOD_DAYS in period_values:
