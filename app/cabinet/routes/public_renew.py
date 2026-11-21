@@ -80,6 +80,16 @@ PUBLIC_RENEW_PATH = '/api/cabinet/public/renew'
 _SHORT_UUID_RE = re.compile(r'^[A-Za-z0-9_-]{4,64}$')
 _METHOD_RE = re.compile(r'^[a-z0-9_]{1,50}$')
 
+# Источник клиента для сплита продлений (Happ vs Incy). Приходит в ?app=, пишется
+# в GuestPurchase.campaign_slug как 'app_<name>'. Белый список — всё прочее игнорируем.
+_ALLOWED_APPS = {'happ', 'incy'}
+
+
+def _app_source(value: str | None) -> str:
+    """Нормализует ?app= к 'happ'/'incy' (или '' вне белого списка)."""
+    v = (value or '').strip().lower()
+    return v if v in _ALLOWED_APPS else ''
+
 _MAX_FORM_BYTES = 4096
 # Страница статуса сама обновляется, пока покупка свежая; потом перестаёт.
 _STATUS_REFRESH_WINDOW = timedelta(minutes=30)
@@ -633,6 +643,8 @@ async def renew_page(
             f'<span class="pm-icon">{icon}</span><span>{html.escape(label)}</span></label>'
         )
     method_rows = ''.join(method_parts)
+    app = _app_source(request.query_params.get('app'))
+    app_hidden = f'<input type="hidden" name="app" value="{app}">' if app else ''
 
     # Относительный action: страница живёт на .../renew/{short_uuid}, форма уходит на .../renew/{short_uuid}/pay
     # и работает при любом префиксе прокси (/api, /cabinet).
@@ -640,6 +652,7 @@ async def renew_page(
     <p class="muted" style="margin-top:4px">{html.escape(_expiry_text(subscription))}</p>
     {_discount_banner(periods)}
     <form method="post" action="{html.escape(short_uuid, quote=True)}/pay">
+      {app_hidden}
       <h2>Период продления</h2>
       {period_rows}
       <h2>Способ оплаты</h2>
@@ -668,6 +681,7 @@ async def renew_pay(
     form = parse_qs(raw_body.decode('utf-8', errors='replace'), keep_blank_values=True)
     period_raw = (form.get('period') or [''])[0].strip()
     method = (form.get('method') or [''])[0].strip()
+    app = _app_source((form.get('app') or [''])[0])
     if not period_raw.isascii() or not period_raw.isdigit() or len(period_raw) > 4 or not _METHOD_RE.fullmatch(method):
         return _message_page('Ошибка', 'Выберите период и способ оплаты.', status_code=400)
     period_days = int(period_raw)
@@ -731,6 +745,7 @@ async def renew_pay(
         contact_value=f'subscription:{subscription_id}',
         payment_method=method,
         source='renew',
+        campaign_slug=(f'app_{app}' if app else None),
         renew_subscription_id=subscription_id,
         renew_target_tariff_id=renew_target_tariff_id,
         commit=False,
