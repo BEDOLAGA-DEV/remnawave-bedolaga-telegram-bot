@@ -64,6 +64,10 @@ RENEW_LANDING_SLUG = 'renew'
 # ведём на этот платный тариф (⭐Стандарт id=2). Чтобы сменить цель, поменяйте id здесь.
 RENEW_UPSELL_TARIFF_ID = 2
 
+# Кнопки на странице «ссылка недоступна» / ошибках (в настройках бота этих ссылок нет).
+_SUPPORT_TG_URL = 'https://t.me/SligVPNHelp'
+_SITE_URL = 'https://slig.app'
+
 # Публичный путь эндпоинтов за прокси кабинета (как у отписки: CABINET_URL + /api/cabinet/public/...).
 PUBLIC_RENEW_PATH = '/api/cabinet/public/renew'
 
@@ -133,6 +137,11 @@ p{margin:0;font-size:15px;line-height:1.55}
 .badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:rgba(37,194,104,.16);color:#64dd98;font-size:11px;font-weight:700;vertical-align:middle}
 button{width:100%;margin-top:20px;border:0;border-radius:13px;padding:15px 20px;font-size:16px;font-weight:700;color:#06120b;background:linear-gradient(135deg,#2bd275,#16a757);cursor:pointer;box-shadow:0 10px 26px rgba(37,194,104,.3)}
 button:hover{filter:brightness(1.06)}
+.pm-icon{flex:none;width:26px;height:26px;display:grid;place-items:center;color:#7fe3a6}
+.pm-icon svg{width:23px;height:23px;display:block}
+.btn-row{display:flex;gap:10px;margin-top:20px}
+.btn-sec{flex:1;text-align:center;text-decoration:none;padding:12px 10px;border-radius:12px;border:1px solid #2f6b4c;color:#9ff0c0;font-size:14px;font-weight:600;background:rgba(37,194,104,.06)}
+.btn-sec:hover{background:rgba(37,194,104,.13);border-color:#3a8a62}
 .foot{margin:20px 0 0;font-size:12px;color:#5f6b67;text-align:center}
 """
 
@@ -179,9 +188,12 @@ def _html_response(
 
 
 def _message_page(title: str, message: str, *, status_code: int, ok: bool = False) -> HTMLResponse:
+    # Кнопки «поддержка/сайт» — на недоступности (404) и серверных ошибках (5xx),
+    # где человек упёрся и ему нужен выход; на валидации (400) и успехе не показываем.
+    extra = _support_buttons() if (not ok and (status_code == 404 or status_code >= 500)) else ''
     return _html_response(
         title,
-        f'<h1>{html.escape(title)}</h1><p style="margin-top:10px">{html.escape(message)}</p>',
+        f'<h1>{html.escape(title)}</h1><p style="margin-top:10px">{html.escape(message)}</p>{extra}',
         status_code=status_code,
         accent='#16a34a' if ok else '#dc2626',
     )
@@ -357,13 +369,51 @@ async def _upsell_period_options(tariff, user) -> list[tuple[int, RenewalPricing
     return options
 
 
+# Чистые линейные иконки способов оплаты (currentColor), вместо эмодзи в названиях.
+_PM_ICONS = {
+    'sbp': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><path d="M14 14h3.6v3.6M21 14.4V21h-6.6"/></svg>',
+    'card': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.6"/><path d="M2.5 9.6h19"/><path d="M6 15h4"/></svg>',
+    'crypto': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M10 7.9v8.2M12.3 7.9v8.2" stroke-width="1.3"/><path d="M9 9h4.3a1.9 1.9 0 010 3.7H9M9 12.4h4.7a1.9 1.9 0 010 3.8H9" stroke-width="1.3"/></svg>',
+    'other': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2.6"/><path d="M3 10h18M16 14.5h2.2"/></svg>',
+}
+
+
+def _strip_lead_emoji(text: str) -> str:
+    """Убрать ведущие эмодзи/символы и пробелы из названия способа оплаты."""
+    s = str(text)
+    cleaned = re.sub(r'^[^0-9A-Za-zА-Яа-яЁё(]+', '', s).strip()
+    return cleaned or s.strip()
+
+
+def _payment_kind(value: str, label: str) -> str:
+    """Тип способа оплаты для иконки."""
+    v, lab = value.lower(), label.lower()
+    if 'сбп' in lab or 'sbp' in v or 'qr' in lab:
+        return 'sbp'
+    if 'крипт' in lab or 'crypto' in lab or any(x in v for x in ('cryptomus', 'heleket', 'crypto')):
+        return 'crypto'
+    if 'карт' in lab or 'card' in v or 'card' in lab:
+        return 'card'
+    return 'other'
+
+
+def _support_buttons() -> str:
+    return (
+        '<div class="btn-row">'
+        f'<a class="btn-sec" href="{html.escape(_SUPPORT_TG_URL, quote=True)}">Поддержка в Telegram</a>'
+        f'<a class="btn-sec" href="{html.escape(_SITE_URL, quote=True)}">На сайт</a>'
+        '</div>'
+    )
+
+
 def _payment_options(raw_methods: list[dict] | None) -> list[tuple[str, str, str]]:
-    """Список (значение формы, основная подпись, вторая строка) из конфига лендинга.
+    """Список (значение формы, подпись, тип-для-иконки) из конфига лендинга.
 
     Под-опции (СБП/карта/банк и т.п.) разворачиваются в отдельные пункты со значением
-    ``<method_id>_<sub_option_id>`` — ровно так их шлёт и обычный лендинг. Основная подпись —
-    это ``display_name`` метода (его правит владелец в админке лендинга), вторая строка —
-    название под-опции (из настроек платёжки). Telegram-only методы пропускаются.
+    ``<method_id>_<sub_option_id>`` — ровно так их шлёт и обычный лендинг. Подпись для метода
+    с под-опциями — имя самой под-опции (``СБП (QR)``, ``Карты (RUB)`` — из настроек платёжки),
+    без под-опций — ``display_name`` метода (правит владелец в админке). Эмодзи из названий
+    убираются — слева рисуется линейная иконка. Telegram-only методы пропускаются.
     """
     method_defaults = _get_method_defaults()
     options: list[tuple[str, str, str]] = []
@@ -374,20 +424,21 @@ def _payment_options(raw_methods: list[dict] | None) -> list[tuple[str, str, str
         name = str(method.get('display_name') or method_id)
         raw_sub_options = method.get('sub_options')  # dict[str, bool] | None
 
-        entries: list[tuple[str, str, str]] = []
+        entries: list[tuple[str, str]] = []  # (value, label)
         method_def = method_defaults.get(method_id)
         available = method_def.get('available_sub_options') if method_def else None
         if available:
             for opt in available:
                 if raw_sub_options is None or raw_sub_options.get(opt['id'], True):
-                    entries.append((f'{method_id}_{opt["id"]}', name, str(opt['name'])))
+                    entries.append((f'{method_id}_{opt["id"]}', str(opt['name'])))
         if not entries:
-            entries.append((method_id, name, ''))
+            entries.append((method_id, name))
 
-        for value, primary, sub in entries:
+        for value, label in entries:
             if is_telegram_only_payment_method(value):
                 continue
-            options.append((value, primary, sub))
+            clean = _strip_lead_emoji(label)
+            options.append((value, clean, _payment_kind(value, clean)))
     return options
 
 
@@ -543,12 +594,12 @@ async def renew_page(
     )
 
     method_parts: list[str] = []
-    for i, (value, primary, sub) in enumerate(payment_options):
+    for i, (value, label, kind) in enumerate(payment_options):
         checked = ' checked' if i == 0 else ''
-        sub_html = f'<span class="sub">{html.escape(sub)}</span>' if sub else ''
+        icon = _PM_ICONS.get(kind) or _PM_ICONS['other']
         method_parts.append(
             f'<label class="opt"><input type="radio" name="method" value="{html.escape(value, quote=True)}" required{checked}>'
-            f'<span class="label"><span>{html.escape(primary)}</span>{sub_html}</span></label>'
+            f'<span class="pm-icon">{icon}</span><span>{html.escape(label)}</span></label>'
         )
     method_rows = ''.join(method_parts)
 
