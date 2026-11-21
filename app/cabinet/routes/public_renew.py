@@ -66,7 +66,10 @@ RENEW_UPSELL_TARIFF_ID = 2
 
 # Кнопки на странице «ссылка недоступна» / ошибках (в настройках бота этих ссылок нет).
 _SUPPORT_TG_URL = 'https://t.me/SligVPNHelp'
-_SITE_URL = 'https://slig.app'
+_SITE_URL = 'https://web.slig.app'
+
+# Период-«хит»: помечается бейджем ХИТ и выбран по умолчанию (если есть среди периодов).
+RENEW_HIT_PERIOD_DAYS = 180
 
 # Публичный путь эндпоинтов за прокси кабинета (как у отписки: CABINET_URL + /api/cabinet/public/...).
 PUBLIC_RENEW_PATH = '/api/cabinet/public/renew'
@@ -135,6 +138,8 @@ p{margin:0;font-size:15px;line-height:1.55}
 .opt .price{margin-left:auto;text-align:right;font-weight:700;white-space:nowrap}
 .opt .price s{display:block;color:#6f7b77;font-weight:400;font-size:12px}
 .badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:rgba(37,194,104,.16);color:#64dd98;font-size:11px;font-weight:700;vertical-align:middle}
+.badge-hit{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#25c268;color:#06120b;font-size:11px;font-weight:800;letter-spacing:.3px;vertical-align:middle}
+.opt .label .save{font-size:12px;color:#64dd98;font-weight:600}
 button{width:100%;margin-top:20px;border:0;border-radius:13px;padding:15px 20px;font-size:16px;font-weight:700;color:#06120b;background:linear-gradient(135deg,#2bd275,#16a757);cursor:pointer;box-shadow:0 10px 26px rgba(37,194,104,.3)}
 button:hover{filter:brightness(1.06)}
 .pm-icon{flex:none;width:26px;height:26px;display:grid;place-items:center;color:#7fe3a6}
@@ -465,9 +470,27 @@ def _discount_pct(pricing: RenewalPricing) -> int:
     return 0
 
 
-def _period_badge(pricing: RenewalPricing) -> str:
-    pct = _discount_pct(pricing)
-    return f'<span class="badge">−{pct}%</span>' if pct > 0 else ''
+def _period_savings(periods: list[tuple[int, RenewalPricing]]) -> dict[int, int]:
+    """Выгода длинного срока: насколько дешевле выходит месяц против самого дорогого
+    (обычно самого короткого) срока. {период_дней: процент_выгоды}, 0 — если выгоды нет.
+    """
+    rates: dict[int, float] = {}
+    for days, pricing in periods:
+        months = days / 30.0
+        if months > 0 and pricing.final_total > 0:
+            rates[days] = pricing.final_total / months
+    if not rates:
+        return {}
+    base = max(rates.values())  # самый дорогой месяц — у самого короткого срока
+    out: dict[int, int] = {}
+    for days, rate in rates.items():
+        pct = round((base - rate) / base * 100) if base > 0 else 0
+        out[days] = pct if pct > 0 else 0
+    return out
+
+
+def _hit_badge(days: int) -> str:
+    return '<span class="badge-hit">ХИТ</span>' if days == RENEW_HIT_PERIOD_DAYS else ''
 
 
 def _discount_banner(periods: list[tuple[int, RenewalPricing]]) -> str:
@@ -583,15 +606,24 @@ async def renew_page(
         tariff = subscription.tariff if subscription.tariff_id else None
         heading = html.escape(tariff.name) if tariff is not None else 'Продление подписки'
         highlighted = tariff.highlight_period_days if tariff is not None else None
-    selected_period = next((p for p, _ in periods if p == highlighted), periods[0][0])
+    period_values = [p for p, _ in periods]
+    if RENEW_HIT_PERIOD_DAYS in period_values:
+        selected_period = RENEW_HIT_PERIOD_DAYS  # «хит» выбран по умолчанию
+    else:
+        selected_period = next((p for p, _ in periods if p == highlighted), periods[0][0])
 
-    period_rows = ''.join(
-        f'<label class="opt"><input type="radio" name="period" value="{period}" required'
-        f'{" checked" if period == selected_period else ""}>'
-        f'<span class="label"><span>{html.escape(_period_label(period))}{_period_badge(pricing)}</span></span>'
-        f'<span class="price">{_price_html(pricing)}</span></label>'
-        for period, pricing in periods
-    )
+    savings = _period_savings(periods)
+    period_parts: list[str] = []
+    for period, pricing in periods:
+        checked = ' checked' if period == selected_period else ''
+        save = savings.get(period, 0)
+        save_html = f'<span class="save">выгода {save}%</span>' if save > 0 else ''
+        period_parts.append(
+            f'<label class="opt"><input type="radio" name="period" value="{period}" required{checked}>'
+            f'<span class="label"><span>{html.escape(_period_label(period))}{_hit_badge(period)}</span>{save_html}</span>'
+            f'<span class="price">{_price_html(pricing)}</span></label>'
+        )
+    period_rows = ''.join(period_parts)
 
     method_parts: list[str] = []
     for i, (value, label, kind) in enumerate(payment_options):
