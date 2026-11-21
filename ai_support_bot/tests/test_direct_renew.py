@@ -19,7 +19,10 @@ def test_paid_subscription_renews_on_its_own_page():
     rows = answer_buttons.renew_buttons(PAID)
     assert rows == [[{'text': 'Продлить подписку', 'url': PAGE + 'AbCd1234Efgh', 'style': 'success'}]]
     text = answer_buttons.renew_answer(rows)
-    assert 'оплата сразу на сайте, без бота' in text and 'кнопка «Продлить»' in text
+    assert 'оплата сразу на сайте, без бота' in text
+    # Owner 21.11: the client may not use Happ, so the app button is not offered unprompted.
+    assert 'Happ' not in text
+    assert 'Happ' not in answer_buttons.renew_answer(answer_buttons.renew_buttons(PAID + SECOND))
 
 
 def test_each_subscription_gets_its_own_page():
@@ -47,13 +50,14 @@ def test_renew_page_named_in_an_answer_becomes_a_button():
     assert answer_buttons.page_actions(f'Оплатить можно тут: {PAGE}AbCd1234Efgh') == ['renew']
 
 
-def test_blank_page_after_renew_mentions_the_app_button():
+def test_blank_page_after_renew_does_not_offer_happ():
     history = [SimpleNamespace(role='assistant', content='⏳ Продлить можно по кнопке ниже — оплата сразу на сайте, без бота.')]
     answer = blank_page_answer('Не открывается. Белый экран', history)
-    assert '«Продлить» в приложении Happ' in answer
+    assert 'web.slig.app' in answer and 'Happ' not in answer
 
 
 def test_policy_knows_the_renew_page():
-    assert 'кнопка «Продлить»' in SUPPORT_POLICY and 'без входа в кабинет' in SUPPORT_POLICY
+    assert 'без входа в кабинет' in SUPPORT_POLICY
+    assert 'Про кнопку «Продлить» в приложении Happ сам не говори' in SUPPORT_POLICY
     assert 'сам такую ссылку не составляй' in SUPPORT_POLICY
     assert SUPPORT_POLICY.strip().splitlines()[-1].startswith('Отвечай кратко')

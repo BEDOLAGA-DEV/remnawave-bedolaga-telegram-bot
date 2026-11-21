@@ -699,12 +699,10 @@ def blank_page_answer(question: str, history: list) -> str | None:
     if not (blank or failed):
         return None
     renew = ' → Продлить' if re.search(r'продл', previous, re.IGNORECASE) or re.search(r'продл', text) else ''
-    app_button = ('\n\nЕщё можно нажать «Продлить» в приложении Happ на странице подписки — откроется страница оплаты.'
-                  if renew else '')
     return (
         'Похоже, страница не загрузилась. Откройте https://web.slig.app в обычном браузере (Safari или Chrome) '
         'и войдите через Telegram или по email.\n\n'
-        f'Или сделайте то же в боте https://t.me/SligVPN_bot: Мои подписки → выберите подписку{renew}.' + app_button
+        f'Или сделайте то же в боте https://t.me/SligVPN_bot: Мои подписки → выберите подписку{renew}.'
     )
 
 
