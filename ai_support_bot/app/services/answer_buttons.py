@@ -2,6 +2,7 @@
 import re
 from datetime import datetime
 
+from ai_support_bot.app.services.subscription_address import current_link
 from ai_support_bot.app.services.telegram_html import is_allowed_link
 
 SITE = 'https://web.slig.app'
@@ -55,7 +56,8 @@ def _url(action: str, links: list[str], subscription_ids: list[str], pages: dict
     if action == 'renew' and single and (pages or {}).get(single):
         return pages[single]
     return {
-        'subscription': links[0] if len(links) == 1 else f'{SITE}/subscriptions',
+        # A link still on connect.sligvpn.ru opens on sub.slig.my: the old domain is blocked by some providers.
+        'subscription': current_link(links[0]) if len(links) == 1 else f'{SITE}/subscriptions',
         'connect': f'{SITE}/connection',
         'devices': f'{SITE}/subscriptions/{single}' if single else f'{SITE}/subscriptions',
         'renew': f'{SITE}/subscriptions/{single}/renew' if single else f'{SITE}/subscriptions',
@@ -80,6 +82,14 @@ def build(actions: list[str], user_context: str = '') -> list[list[dict]]:
             continue
         rows.append([{'text': label, 'url': url, **({'style': style} if style else {})}])
     return rows
+
+
+def subscription_button(links: list[str] | tuple[str, ...]) -> list[list[dict]]:
+    """«Моя подписка» for the one working subscription named in a rule answer; several links get no button, not a guess."""
+    if len(links) != 1 or not is_allowed_link(links[0]):
+        return []
+    label, style = ACTIONS['subscription']
+    return [[{'text': label, 'url': links[0], 'style': style}]]
 
 
 _SUBSCRIPTION_LINE = re.compile(r'подписка №(\d+) \(id=(\d+)\), статус=[^,]*, триал=(да|нет), до ([\d.]+)')

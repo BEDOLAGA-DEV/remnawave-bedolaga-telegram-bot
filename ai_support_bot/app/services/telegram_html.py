@@ -1,19 +1,26 @@
 import os
 import re
-from html import escape
+from html import escape, unescape
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 from ai_support_bot.app.services.emoji_style import CUSTOM_EMOJI_IDS
+from ai_support_bot.app.services.subscription_address import (
+    SUBSCRIPTION_HOSTS,
+    current_link,
+    is_subscription_link,
+    link_code,
+)
 
 
 # Links the model may show to a customer. A domain also allows its subdomains (personal subscription links
-# live on connect.sligvpn.ru, the cabinet on web.slig.app). Sources: support_policy.py, response_rules.py,
-# navigation (web.slig.app, t.me/SligVPN_bot), service_identity.py (_SERVICE_HOSTS), Happ and Incy sites.
+# live on sub.slig.my since 23.11.2026 and on connect.sligvpn.ru before; the cabinet is on web.slig.app).
+# Sources: support_policy.py, response_rules.py, navigation (web.slig.app, t.me/SligVPN_bot),
+# service_identity.py (_SERVICE_HOSTS), subscription_address.py, Happ and Incy sites.
 # happ-sub.at and incy.at are the owner's guides: allowed, but not offered to the model.
 # AISUP_EXTRA_LINK_HOSTS (comma separated) adds hosts without a release, e.g. a new subscription domain.
 _ALLOWED_LINK_DOMAINS = frozenset({
-    'slig.app', 'sligvpn.ru', 'happ.su', 'incy.cc', 'docs.incy.cc', 'happ-sub.at', 'incy.at',
+    'slig.app', 'sligvpn.ru', 'slig.my', 'happ.su', 'incy.cc', 'docs.incy.cc', 'happ-sub.at', 'incy.at',
     'apps.apple.com', 'support.apple.com', 'play.google.com',
 } | {host.strip().lower().strip('.') for host in os.getenv('AISUP_EXTRA_LINK_HOSTS', '').split(',') if host.strip()})
 # Only our own bots and channels on t.me: any other handle can impersonate support or sell a foreign service.
@@ -173,11 +180,56 @@ def drop_removed_link_lines(text: str) -> str:
     return _REMOVED_LINK_LINE.sub('', text).strip()
 
 
+_HOSTS = '|'.join(re.escape(host) for host in sorted(SUBSCRIPTION_HOSTS))
+# A personal subscription link with its code, with or without the scheme, optionally inside <code>.
+_SUBSCRIPTION_URL = re.compile(
+    r'(?P<open><code>[ \t]*)?(?<![\w.@/-])(?P<url>(?:https?://)?(?:' + _HOSTS + r')(?![\w.-])(?::\d{1,5})?/[A-Za-z0-9_-]+'
+    r'[^\s<>"\']*)(?P<close>[ \t]*</code>)?',
+    re.IGNORECASE,
+)
+_ANCHOR = re.compile(r'<a href="([^"]*)">(.*?)</a>', re.DOTALL | re.IGNORECASE)
+
+
+def keep_own_subscription_links(text: str, codes: set[str]) -> str:
+    """Only the customer's own subscription links stay in an answer, on the current host.
+
+    Old tickets in the knowledge base carry other people's links: a link whose code is not among the customer's
+    subscriptions becomes [ссылка удалена] (drop_removed_link_lines then removes a line left with nothing else).
+    """
+    if not text:
+        return text
+
+    def anchor(match):
+        href = unescape(match.group(1))
+        code = link_code(href)
+        if code is None:
+            return match.group(0)
+        if code not in codes:
+            return match.group(2)  # the label stays; a label that is itself a link is checked below
+        return f'<a href="{escape(current_link(href), quote=True)}">{match.group(2)}</a>'
+
+    def link(match):
+        full = match.group('url')
+        url = full.rstrip('.,;!):]')
+        tail = full[len(url):]
+        if link_code(url) not in codes:
+            return _REMOVED_LINK + tail
+        return (match.group('open') or '') + current_link(url) + tail + (match.group('close') or '')
+
+    return _SUBSCRIPTION_URL.sub(link, _ANCHOR.sub(anchor, text))
+
+
+def _code_link(match: re.Match) -> str:
+    # A subscription link stays in <code>: Telegram copies it with one tap, and it is added in the app, not opened.
+    url = match.group(1)
+    return f'<code>{url}</code>' if is_subscription_link(url) else url
+
+
 def sanitize_telegram_html(text: str) -> str:
-    text = re.sub(r'<code>\s*(https://[^\s<>]+)\s*</code>', r'\1', text, flags=re.IGNORECASE)
+    text = re.sub(r'<code>\s*(https://[^\s<>]+)\s*</code>', _code_link, text, flags=re.IGNORECASE)
     parser = _TelegramHTML()
     parser.feed(text)
     parser.close()
     parser.parts.extend(f'</{tag}>' for tag in reversed(parser.stack))
     rendered = ''.join(parser.parts).strip()
-    return re.sub(r'<code>\s*(https://[^\s<>]+)\s*</code>', r'\1', rendered, flags=re.IGNORECASE)
+    return re.sub(r'<code>\s*(https://[^\s<>]+)\s*</code>', _code_link, rendered, flags=re.IGNORECASE)

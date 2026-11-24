@@ -27,7 +27,8 @@ def test_personal_link_and_subscription_pages_come_from_customer_data():
     rows = build(['subscription', 'renew'], ONE_SUBSCRIPTION)
 
     assert rows == [
-        [{'text': 'Моя подписка', 'url': 'https://connect.sligvpn.ru/AbC123', 'style': 'primary'}],
+        # Since 23.11.2026 a link still on the old domain opens on sub.slig.my with the same code.
+        [{'text': 'Моя подписка', 'url': 'https://sub.slig.my/AbC123', 'style': 'primary'}],
         # Since 21.11 the renew button opens the payment page of this subscription, by the code from its link.
         [{'text': 'Продлить подписку', 'url': f'{SITE}/api/cabinet/public/renew/AbC123', 'style': 'success'}],
     ]

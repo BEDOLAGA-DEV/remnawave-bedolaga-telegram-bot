@@ -76,9 +76,21 @@ from ai_support_bot.app.services.service_identity import (
     renewal_verification_answer,
     tariff_question,
 )
+from ai_support_bot.app.services.subscription_address import (
+    address_answer,
+    address_help_given,
+    address_problem,
+    own_codes,
+    paid_answer,
+    paid_claim,
+)
 from ai_support_bot.app.services.summary_service import summary_service
 from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
-from ai_support_bot.app.services.telegram_html import drop_removed_link_lines, sanitize_telegram_html
+from ai_support_bot.app.services.telegram_html import (
+    drop_removed_link_lines,
+    keep_own_subscription_links,
+    sanitize_telegram_html,
+)
 from ai_support_bot.app.services.user_data import build_user_context, resolve_user_language
 
 
@@ -308,11 +320,22 @@ _response_cache = _ResponseCache()
 def convert_markdown_to_html(text: str) -> str:
     if not text:
         return text
-    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-    text = re.sub(r'__(.*?)__', r'<b>\1</b>', text)
-    text = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'<i>\1</i>', text)
-    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-    return sanitize_telegram_html(text)
+    # Nothing inside <code> is Markdown: «__» in a subscription code must not turn into bold.
+    parts = re.split(r'(<code>.*?</code>)', text, flags=re.DOTALL | re.IGNORECASE)
+    for index in range(0, len(parts), 2):
+        part = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', parts[index])
+        part = re.sub(r'__(.*?)__', r'<b>\1</b>', part)
+        part = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'<i>\1</i>', part)
+        parts[index] = re.sub(r'`([^`]+)`', r'<code>\1</code>', part)
+    return sanitize_telegram_html(''.join(parts))
+
+
+def _remember_account_data(state: dict, output: dict) -> None:
+    """Account data a tool refreshed: its subscription links are the customer's own too."""
+    refresh = output.get('refresh') if isinstance(output.get('refresh'), dict) else {}
+    for data in (output.get('account_data'), refresh.get('account_data')):
+        if isinstance(data, str) and data:
+            state.setdefault('_account_data', []).append(data)
 
 
 def _is_smalltalk(text: str) -> bool:
@@ -430,6 +453,7 @@ class SupportAgent:
                         function.get('name', ''), function.get('arguments', ''), telegram_id, state, evidence,
                     )
                     executed += 1
+                    _remember_account_data(state, output)
                 messages.append({
                     'role': 'tool', 'tool_call_id': call['id'],
                     'content': json.dumps(output, ensure_ascii=False),
@@ -647,12 +671,39 @@ class SupportAgent:
                 recovery_answer, forced_reason = candidate, None
             elif recovery_reason:
                 forced_reason = recovery_reason
+        # 23.11.2026 the subscription moved to sub.slig.my: the app cannot refresh by the old link, so its steps,
+        # its «нет серверов» and its old date after a payment are answered by the code, once per dialogue.
+        # Money disputes, a human request and «ок, жду» keep their handoff; an ended subscription keeps its own answer
+        # (the rules need a working one). Only a failed diagnostics round gives way: no step helps with a blocked domain.
+        account_context = ''
+        rule_answer = deferred_paid = None
+        if (not waiting and forced_reason in {None, 'diagnostics_failed'} and not pricing_question and not renewal_wish
+                and not address_help_given(history)):
+            source_status = (support_state.get('service_source') or {}).get('status')
+            payment_case = forced_reason is None and source_status not in {'foreign', 'conflict'} and paid_claim(
+                question, pending=bool(support_state.get('renewal_verification')))
+            address_kind = address_problem(question)
+            if image_url and address_kind == 'stale':
+                address_kind = None  # a receipt or an app screen with dates: the model reads the photo first
+            if payment_case or address_kind:
+                account_context = await build_user_context(telegram_id)
+                paid = paid_answer(account_context) if payment_case else None
+                if paid and image_url:
+                    deferred_paid = paid  # decided after verify_service_source: the photo may be another service's receipt
+                else:
+                    rule_answer = paid or (address_answer(account_context, question) if address_kind else None)
+            if rule_answer:
+                forced_reason, recovery_answer = None, None
+        rule_text = rule_answer.text if rule_answer else None
         scope_answer = boundary_answer(question)
         # «Белый экран» after a renew button is a page that did not load, not a VPN failure.
         page_answer = None if forced_reason else blank_page_answer(question, history)
-        direct_answer = (None if forced_reason else scope_answer) or page_answer or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
-        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'navigation' if direct_answer == page_answer else 'apps'
+        direct_answer = (None if forced_reason else scope_answer) or page_answer or rule_text or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
+        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'navigation' if direct_answer == page_answer else 'address' if direct_answer == rule_text else 'apps'
         if direct_answer and support_state.get('issue') == 'payment_activation':
+            support_state = {'issue': 'other'}
+        if direct_kind == 'address' and (support_state.get('renewal_verification') or support_state.get('issue') == 'payment_missing'):
+            # The answer settles the payment question from our data: no sticky receipt requests afterwards.
             support_state = {'issue': 'other'}
         if not forced_reason and wheel_reward_request(question, history, support_state):
             if scope_email := extract_reported_email(question):
@@ -696,7 +747,7 @@ class SupportAgent:
         capture_payment_details(question, supplied_details)
         complete_details = all(supplied_details.get(key) for key in ('payment_amount', 'payment_time', 'payment_operation_id'))
         payment_reply = complete_details and any(re.search(r'плат[её]ж|оплат|чек|выписк', item.content or '', re.IGNORECASE) for item in history)
-        if is_payment_missing(question) or payment_reply:
+        if (is_payment_missing(question) or payment_reply) and direct_kind != 'address':
             if support_state.get('issue') != 'payment_missing':
                 pending_email = support_state.get('email')
                 support_state = {'issue': 'payment_missing', **({'email': pending_email} if pending_email else {})}
@@ -734,9 +785,12 @@ class SupportAgent:
         if support_state.get('issue') not in {'payment_missing', 'payment_activation', 'wheel_reward'} and support_state.get('email') and not reported_email and not keeps_account_scope(question):
             support_state = {'issue': 'other'}
         email = reported_email or support_state.get('email')
-        user_context = ''
+        user_context = account_context if direct_answer else ''
         if not smalltalk and not forced_reason and not direct_answer:
-            user_context = registration_refresh or (await build_user_context(telegram_id, email=email) if email else await build_user_context(telegram_id))
+            user_context = registration_refresh or (
+                await build_user_context(telegram_id, email=email) if email
+                else account_context or await build_user_context(telegram_id)
+            )
         if email and ('Нет подтверждённой связи' in user_context or 'не подтверждены' in user_context):
             if support_state.get('issue') in {'payment_missing', 'payment_activation'}:
                 support_state['email'] = email
@@ -871,6 +925,10 @@ class SupportAgent:
             escalation_reason = 'wheel_reward_review' if escalate else None
             if escalate:
                 forced_reason = escalation_reason
+        if deferred_paid and not forced_reason and (support_state.get('service_source') or {}).get('status') not in {'foreign', 'conflict'}:
+            # The photo is not another service's receipt: the completed payment in our data answers, not a receipt loop.
+            answer_text, escalate, rule_answer, direct_kind = deferred_paid.text, False, deferred_paid, 'address'
+            support_state = {'issue': 'other'}
         templated = False
         if not forced_reason and not smalltalk and not pricing_question and support_state.get('issue') == 'payment_activation':
             access = support_state.get('_access_result')
@@ -928,7 +986,9 @@ class SupportAgent:
         if (scope_answer and not forced_reason) or generated_program(answer_text):
             answer_text = scope_answer or SUPPORT_SCOPE_ANSWER
             escalate, hedged, escalation_reason = False, False, None
-        answer_text = drop_removed_link_lines(convert_markdown_to_html(answer_text))
+        # Old tickets carry other customers' subscription links: only this customer's own may reach the answer.
+        codes = own_codes(user_context, account_context, *support_state.get('_account_data', []))
+        answer_text = drop_removed_link_lines(keep_own_subscription_links(convert_markdown_to_html(answer_text), codes))
         if not escalate and unsupported_price(re.sub(r'<[^>]*>', '', answer_text), question, catalog_block):
             answer_text = NOTICE
             escalate = True
@@ -948,6 +1008,10 @@ class SupportAgent:
         if money_case:
             button_actions = [action for action in button_actions if action not in _PAYMENT_BUTTONS]
         buttons = answer_buttons.build(button_actions, user_context)
+        address_rule = direct_kind == 'address' and rule_answer is not None
+        if address_rule:
+            # «Моя подписка» opens the page with «Добавить в Happ / INCY»; several subscriptions get no guessed button.
+            buttons = [] if serious or escalate else answer_buttons.subscription_button(rule_answer.links)
         if renewal_wish and not (serious or escalate):
             buttons = answer_buttons.renew_buttons(user_context or await build_user_context(telegram_id))
             # The buttons already lead to the renewal page; a price question keeps the prices.
@@ -959,18 +1023,18 @@ class SupportAgent:
             (pricing_question or bool(re.search(r'\bтариф', question, re.IGNORECASE)))
             and not money_case and not partnership_offer(question)
         )
-        if not buttons and not (serious or escalate) and (price_like or device_action):
+        if not buttons and not (serious or escalate or address_rule) and (price_like or device_action):
             context = user_context or await build_user_context(telegram_id)
             if price_like:
                 buttons = answer_buttons.renew_buttons(context) or answer_buttons.build(['buy'])
             else:
                 buttons = answer_buttons.build([device_action], context)
         # The answer sends the customer to «Подключить устройство»: the button saves the search.
-        if not buttons and not (serious or escalate) and answer_buttons.mentions_connect(answer_text):
+        if not buttons and not (serious or escalate or address_rule) and answer_buttons.mentions_connect(answer_text):
             buttons = answer_buttons.build(['connect'], user_context)
         # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
         recent_question = ' '.join([item.content or '' for item in history[-2:] if item.role == 'user'] + [question])
-        if not (serious or escalate or renewal_wish or money_case) and not _WORKS_SOMEWHERE.search(recent_question) and (
+        if not (serious or escalate or renewal_wish or money_case or address_rule) and not _WORKS_SOMEWHERE.search(recent_question) and (
             starts_technical_issue(question) or re.search(
                 r'не\s+(?:работа|подключ|устанавлива|грузит|загружа|открыва|соедин)|перестал\w*\s+(?:работ|подключ|грузит|открыва)'
                 r'|сломал|отвалил|stopped\s+working|not\s+working|doesn.?t\s+work|can.?t\s+connect',
@@ -1012,6 +1076,7 @@ class SupportAgent:
         support_state.pop('_store_help', None)
         support_state.pop('_tariff_question', None)
         support_state.pop('_renewal_request', None)
+        support_state.pop('_account_data', None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
         support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []

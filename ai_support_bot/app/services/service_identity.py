@@ -3,7 +3,8 @@ import re
 from urllib.parse import urlsplit
 
 
-_SERVICE_HOSTS = {'slig.app', 'web.slig.app', 'sligvpn.ru', 'connect.sligvpn.ru'}
+# Subscription links: sub.slig.my since 23.11.2026, connect.sligvpn.ru before.
+_SERVICE_HOSTS = {'slig.app', 'web.slig.app', 'sligvpn.ru', 'connect.sligvpn.ru', 'sub.slig.my'}
 _SERVICE_BOTS = {'sligvpn_bot', 'sligapp', 'strelka_vpn_bot'}
 # Our payment gateway shows its own seller names on receipts; the list is not complete.
 _GATEWAY_NAME = re.compile(r'strelka|стрелк|максим', re.IGNORECASE)
