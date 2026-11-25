@@ -1255,8 +1255,12 @@ async def purchase_tariff_with_lava_recurring(
     quote_id=None,
     checkout_id=None,
     channel: str = 'cabinet',
+    as_copy: bool = False,
 ) -> dict[str, Any]:
     """Оформление подписки на тариф оплатой через автопродление Lava.
+
+    ``as_copy`` — ещё одна копия тарифа, который у человека уже живёт: под неё
+    заводится своя заготовка с ключом копии, живые подписки тарифа не трогаются.
 
     Первое списание Lava = оплата первого счёта по ссылке из subscribe, поэтому
     «купить с автооплатой» — это привязка + первый чардж, который продлит и
@@ -1288,6 +1292,7 @@ async def purchase_tariff_with_lava_recurring(
             checkout_id=checkout_id,
             subscription_id=subscription_id,
             channel=channel,
+            as_copy=as_copy,
         )
         result = await enable_lava_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
         return {**result, 'subscription_id': subscription.id}
@@ -1298,7 +1303,13 @@ async def purchase_tariff_with_lava_recurring(
         get_subscription_by_user_id,
     )
 
-    if subscription_id is not None:
+    if as_copy:
+        if subscription_id is not None or not settings.is_multi_tariff_enabled():
+            raise ValueError('checkout_conflict')
+        from app.services.recurrent_purchase_selection import resolve_new_copy_placeholder
+
+        subscription = await resolve_new_copy_placeholder(db, user_id=user.id, tariff=tariff)
+    elif subscription_id is not None:
         from app.services.recurrent_purchase_selection import resolve_recurrent_purchase_selection
 
         subscription = await resolve_recurrent_purchase_selection(

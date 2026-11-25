@@ -6852,9 +6852,11 @@ async def purchase_tariff_endpoint(
 
     # Calculate price via PricingEngine (single source of truth)
     subs = getattr(user, 'subscriptions', None) or []
+    # Ещё одна копия тарифа: новая подписка, наследовать нечего.
+    as_copy = settings.is_multi_tariff_enabled() and payload.as_copy is True
     # Find subscription with same tariff for device limit inheritance
-    matching_sub = next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
-    if matching_sub is None:
+    matching_sub = None if as_copy else next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
+    if matching_sub is None and not as_copy:
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
@@ -6906,7 +6908,9 @@ async def purchase_tariff_endpoint(
     # повторяет рабочий путь бота (app/handlers/subscription/tariff_purchase.py):
     # в мультитарифе берётся подписка на ЭТОТ тариф, в классическом режиме —
     # единственная подписка пользователя.
-    if settings.is_multi_tariff_enabled():
+    if as_copy:
+        subscription = None
+    elif settings.is_multi_tariff_enabled():
         active_subs = await get_active_subscriptions_by_user_id(db, user.id)
         subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
         if subscription is None:
@@ -6994,8 +6998,8 @@ async def purchase_tariff_endpoint(
             commit=not managed_purchase,
         )
     else:
-        # Создание новой подписки
-        from app.database.crud.subscription import create_paid_subscription
+        # Создание новой подписки (или ещё одной копии тарифа)
+        from app.database.crud.subscription import create_paid_subscription, new_tariff_copy_key
 
         subscription = await create_paid_subscription(
             db=db,
@@ -7005,6 +7009,7 @@ async def purchase_tariff_endpoint(
             device_limit=tariff.device_limit,
             connected_squads=squads,
             tariff_id=tariff.id,
+            copy_key=new_tariff_copy_key() if as_copy else None,
         )
 
     # Инициализация daily полей при покупке суточного тарифа
@@ -7265,12 +7270,6 @@ async def switch_tariff_endpoint(
     user = await lock_user_for_pricing(db, user.id)
     if subscription.user_id != user.id:
         raise HTTPException(status_code=404, detail='Subscription not found')
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_target = await get_subscription_by_user_and_tariff(db, user.id, payload.tariff_id)
-        if existing_target and existing_target.id != subscription.id:
-            raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
     if (
         subscription.status not in ('active', 'trial', 'limited')
@@ -7421,8 +7420,10 @@ async def switch_tariff_endpoint(
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
     # Обновляем подписку - меняем тариф без изменения даты
-    from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+    from app.database.crud.subscription import calc_device_limit_on_tariff_switch, ensure_tariff_copy_key
 
+    # Тариф уже есть в другой подписке — эта станет его копией (ключ до записи тарифа).
+    await ensure_tariff_copy_key(db, subscription, new_tariff.id)
     subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
     if accounting_panel is not None:

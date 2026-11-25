@@ -7058,5 +7058,12 @@
   "SUBSCRIPTION_MIRROR_MAIN": "Основне",
   "SUBSCRIPTION_MIRROR_SELECTOR": "Посилання: {label} ▾",
   "SUBSCRIPTION_MIRROR_CHOOSE": "Виберіть посилання для підключення:",
-  "SUBSCRIPTION_MIRROR_SELECTED": "Посилання для цього підключення: {label}"
+  "SUBSCRIPTION_MIRROR_SELECTED": "Посилання для цього підключення: {label}",
+  "TARIFF_COPY_CHOICE_TEXT": "📦 <b>{name}</b> у вас уже є.\n\nПродовжте наявну підписку або купіть ще одну — у кожної підписки свої пристрої, трафік і посилання для підключення.",
+  "TARIFF_COPY_EXTEND_BUTTON": "🔄 Продовжити: до {date}",
+  "TARIFF_COPY_BUY_BUTTON": "➕ Купити ще одну",
+  "ADMIN_TARIFF_COPY_CHOICE_TEXT": "📦 <b>{name}</b> у користувача вже є.\n\nПродовжте наявну підписку або купіть ще одну — у кожної підписки свої пристрої, трафік і посилання для підключення.",
+  "GIFT_COPY_CHOICE_TEXT": "🎁 Тариф цього подарунка у вас уже є.\n\nДодайте дні до наявної підписки або активуйте подарунок окремою підпискою — у неї будуть свої пристрої, трафік і посилання для підключення.",
+  "GIFT_COPY_EXTEND_BUTTON": "🔄 Додати до підписки: до {date}",
+  "GIFT_COPY_NEW_BUTTON": "➕ Окремою підпискою"
 }

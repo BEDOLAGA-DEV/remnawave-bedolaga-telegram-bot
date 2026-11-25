@@ -6263,14 +6263,50 @@ async def admin_buy_tariff(callback: types.CallbackQuery, db_user: User, db: Asy
     await callback.answer()
 
 
-async def _admin_tariff_purchase_quote(db, user, tariff, period):
-    """Use the same target, paid device limit and price for preview and execution."""
+ADMIN_TARIFF_BUY_NEW_COPY = 'n'
+
+
+def _admin_tariff_buy_target(parts: list[str], index: int) -> int | str | None:
+    """Хвост колбэка покупки тарифа админом: id подписки для продления или новая копия."""
+    if len(parts) <= index:
+        return None
+    token = parts[index]
+    if token == ADMIN_TARIFF_BUY_NEW_COPY:
+        return ADMIN_TARIFF_BUY_NEW_COPY
+    if token.startswith('t') and token[1:].isdigit():
+        return int(token[1:])
+    return None
+
+
+def _admin_tariff_buy_suffix(target: int | str | None) -> str:
+    if target == ADMIN_TARIFF_BUY_NEW_COPY:
+        return f'_{ADMIN_TARIFF_BUY_NEW_COPY}'
+    if isinstance(target, int):
+        return f'_t{target}'
+    return ''
+
+
+async def _admin_tariff_purchase_quote(db, user, tariff, period, target: int | str | None = None):
+    """Use the same target, paid device limit and price for preview and execution.
+
+    ``target`` — выбор админа, когда тариф у пользователя уже жив: id подписки,
+    которую продлить, или ``ADMIN_TARIFF_BUY_NEW_COPY`` — ещё одна копия тарифа.
+    """
     from app.services.pricing_engine import pricing_engine
 
     if (tariff.is_daily and period != 1) or not tariff.has_configured_price_for_period(period):
         raise ValueError('Tariff period is unavailable')
-    subscription = await _resolve_admin_subscription(db, user.id, tariff_id=tariff.id)
-    if subscription is None and settings.is_multi_tariff_enabled():
+    if target == ADMIN_TARIFF_BUY_NEW_COPY:
+        subscription = None
+    elif isinstance(target, int):
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        subscription = await get_subscription_by_id_for_user(db, target, user.id)
+        if subscription is None or subscription.tariff_id != tariff.id:
+            raise ValueError('Selected subscription is unavailable')
+    else:
+        subscription = await _resolve_admin_subscription(db, user.id, tariff_id=tariff.id)
+    if subscription is None and target is None and settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
         subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
@@ -6298,6 +6334,8 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
     parts = callback.data.split('_')
     user_id = int(parts[4])
     tariff_id = int(parts[5])
+    target = _admin_tariff_buy_target(parts, 6)
+    suffix = _admin_tariff_buy_suffix(target)
 
     user_service = UserService()
     profile = await user_service.get_user_profile(db, user_id)
@@ -6316,10 +6354,56 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
         await callback.answer(texts.t('ADMIN_USERS_PURCHASE_070', '❌ Тариф недоступен'), show_alert=True)
         return
 
+    if target is None and settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_live_subscriptions_by_user_and_tariff
+
+        owned = await get_live_subscriptions_by_user_and_tariff(db, target_user.id, tariff.id)
+        if owned:
+            # Тариф у пользователя уже жив: продлить имеющуюся (какую) или купить ещё одну.
+            keyboard = [
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('TARIFF_COPY_EXTEND_BUTTON', '🔄 Продлить: до {date}').format(
+                            date=format_local_datetime(owned_sub.end_date, '%d.%m.%Y')
+                        ),
+                        callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}_t{owned_sub.id}',
+                    )
+                ]
+                for owned_sub in owned
+            ]
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('TARIFF_COPY_BUY_BUTTON', '➕ Купить ещё одну'),
+                        callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}_{ADMIN_TARIFF_BUY_NEW_COPY}',
+                    )
+                ]
+            )
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_USERS_PURCHASE_096', '⬅️ К тарифам'),
+                        callback_data=f'admin_tariff_buy_{user_id}',
+                    )
+                ]
+            )
+            await callback.message.edit_text(
+                texts.t(
+                    'ADMIN_TARIFF_COPY_CHOICE_TEXT',
+                    '📦 <b>{name}</b> у пользователя уже есть.\n\n'
+                    'Продлите имеющуюся подписку или купите ещё одну — у каждой подписки '
+                    'свои устройства, трафик и ссылка подключения.',
+                ).format(name=html.escape(tariff.name)),
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+                parse_mode='HTML',
+            )
+            await callback.answer()
+            return
+
     initial_period = 1 if tariff.is_daily else next(iter(tariff.period_prices or {}), None)
     device_limit = tariff.device_limit
     if initial_period is not None:
-        _, device_limit, _ = await _admin_tariff_purchase_quote(db, target_user, tariff, int(initial_period))
+        _, device_limit, _ = await _admin_tariff_purchase_quote(db, target_user, tariff, int(initial_period), target)
     target_user_link = user_html_link(target_user)
     target_user_id_display = target_user.telegram_id or target_user.email or f'#{target_user.id}'
     traffic = (
@@ -6348,7 +6432,7 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
 
     for period_str, price in sorted(prices.items(), key=lambda x: int(x[0])):
         period = int(period_str)
-        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period)
+        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period, target)
         price = pricing.final_total
         keyboard.append(
             [
@@ -6356,7 +6440,7 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
                     text=texts.t('ADMIN_USERS_PURCHASE_112', '{value1} дней — {value2}').format(
                         value1=period, value2=settings.format_price(price)
                     ),
-                    callback_data=f'admin_tariff_buy_confirm_{user_id}_{tariff_id}_{period}_{price}',
+                    callback_data=f'admin_tariff_buy_confirm_{user_id}_{tariff_id}_{period}_{price}{suffix}',
                 )
             ]
         )
@@ -6385,6 +6469,8 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
     tariff_id = int(parts[5])
     period = int(parts[6])
     price_kopeks = int(parts[7])
+    target = _admin_tariff_buy_target(parts, 8)
+    suffix = _admin_tariff_buy_suffix(target)
 
     user_service = UserService()
     profile = await user_service.get_user_profile(db, user_id)
@@ -6404,7 +6490,7 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
         return
 
     try:
-        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period)
+        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period, target)
         price_kopeks = pricing.final_total
     except ValueError:
         await callback.answer(texts.t('ADMIN_USERS_PURCHASE_097', 'Период тарифа недоступен'), show_alert=True)
@@ -6427,7 +6513,7 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('ADMIN_USERS_LIMITS_032', '⬅️ Назад'),
-                            callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}',
+                            callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}{suffix}',
                         )
                     ]
                 ]
@@ -6465,13 +6551,13 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
         [
             types.InlineKeyboardButton(
                 text=texts.t('ADMIN_BLOCKED_BUTTON_CONFIRM', '✅ Подтвердить'),
-                callback_data=f'admin_tariff_buy_exec_{user_id}_{tariff_id}_{period}_{price_kopeks}',
+                callback_data=f'admin_tariff_buy_exec_{user_id}_{tariff_id}_{period}_{price_kopeks}{suffix}',
             )
         ],
         [
             types.InlineKeyboardButton(
                 text=texts.t('ADMIN_USERS_LIMITS_023', '❌ Отмена'),
-                callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}',
+                callback_data=f'admin_tariff_buy_select_{user_id}_{tariff_id}{suffix}',
             )
         ],
     ]
@@ -6492,6 +6578,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
     tariff_id = int(parts[5])
     period = int(parts[6])
     price_kopeks_from_callback = int(parts[7])
+    target = _admin_tariff_buy_target(parts, 8)
 
     user_service = UserService()
     profile = await user_service.get_user_profile(db, user_id)
@@ -6517,7 +6604,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
 
     try:
         existing_subscription, device_limit, result = await _admin_tariff_purchase_quote(
-            db, target_user, tariff, period
+            db, target_user, tariff, period, target
         )
         price_kopeks = result.final_total
     except Exception as e:
@@ -6586,6 +6673,12 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             )
 
         if existing_subscription:
+            if isinstance(target, int):
+                from app.database.crud.subscription import ensure_tariff_copy_key
+
+                # Админ выбрал эту подписку сам; если она успела истечь рядом с
+                # живой обычной того же тарифа, продление сделает её копией.
+                await ensure_tariff_copy_key(db, existing_subscription, tariff.id)
             # Продлеваем существующую подписку
             subscription = await extend_subscription(
                 db,
@@ -6600,7 +6693,9 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 commit=not managed_purchase,
             )
         else:
-            # Создаем новую подписку
+            # Создаем новую подписку (или ещё одну копию тарифа — по выбору админа)
+            from app.database.crud.subscription import new_tariff_copy_key
+
             subscription = await create_paid_subscription(
                 db=db,
                 user_id=target_user.id,
@@ -6609,6 +6704,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                copy_key=new_tariff_copy_key() if target == ADMIN_TARIFF_BUY_NEW_COPY else None,
             )
 
         # Создаем транзакцию
@@ -7127,6 +7223,10 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
 
         if subscription.tariff_id != tariff.id:
             subscription.daily_devices_billing_version = 0
+            from app.database.crud.subscription import ensure_tariff_copy_key
+
+            # Тариф уже есть в другой подписке — эта станет его копией.
+            await ensure_tariff_copy_key(db, subscription, tariff.id)
         subscription.tariff_id = tariff.id
         if managed_panel is not None:
             subscription.tariff = tariff

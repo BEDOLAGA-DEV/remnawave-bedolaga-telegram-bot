@@ -662,6 +662,8 @@ class MiniAppTariffPurchaseRequest(BaseModel):
     init_data: str = Field(..., alias='initData')
     tariff_id: int = Field(..., alias='tariffId')
     period_days: int = Field(..., alias='periodDays')
+    # Мультитариф: ещё одна копия тарифа, который у пользователя уже живёт.
+    as_copy: bool = Field(False, alias='asCopy')
 
 
 class MiniAppTariffPurchaseResponse(BaseModel):

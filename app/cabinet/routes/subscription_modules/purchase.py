@@ -127,6 +127,11 @@ async def _persist_failed_refund(user_id: int, amount_kopeks: int, reason: str, 
 purchase_service = MiniAppSubscriptionPurchaseService()
 
 
+def _is_copy_purchase(request) -> bool:
+    """Покупка ещё одной копии тарифа (только мультитариф)."""
+    return settings.is_multi_tariff_enabled() and getattr(request, 'as_copy', False) is True
+
+
 async def _ensure_tariff_not_already_active(db: AsyncSession, user_id: int, tariff_id: int) -> None:
     """Отказ, если у человека уже есть живая подписка этого тарифа.
 
@@ -476,6 +481,9 @@ async def get_purchase_options(
                 'all_tariffs_purchased': len(purchased_tariff_ids) >= len(tariffs)
                 if settings.is_multi_tariff_enabled()
                 else False,
+                # Мультитариф: купленный тариф можно купить ещё раз (as_copy) и
+                # перейти на него сменой. Клиент без этого флага прячет такие тарифы.
+                'tariff_copies_enabled': settings.is_multi_tariff_enabled(),
                 # Направления смены тарифа
                 'tariff_switch_upgrade_enabled': settings.TARIFF_SWITCH_UPGRADE_ENABLED,
                 'tariff_switch_downgrade_enabled': settings.TARIFF_SWITCH_DOWNGRADE_ENABLED,
@@ -733,7 +741,20 @@ async def _resolve_tariff_purchase_target(
 ):
     """Use the same target resolution for preview and confirmation."""
     existing_subscription = None
-    if settings.is_multi_tariff_enabled():
+    if settings.is_multi_tariff_enabled() and _is_copy_purchase(request):
+        # Ещё одна копия тарифа, который у человека уже живёт: живые подписки
+        # тарифа — не цель. Конверсия триала и реанимация истёкшей копии — по
+        # общему правилу create_paid_subscription.
+        if request.subscription_id is not None:
+            raise HTTPException(status_code=409, detail={'code': 'copy_requires_new_subscription'})
+        if (
+            isinstance(request, TariffPurchasePreviewRequest)
+            or getattr(request, 'selected_device_limit', None) is not None
+        ):
+            from app.database.crud.subscription import resolve_trial_conversion_candidate
+
+            existing_subscription = await resolve_trial_conversion_candidate(db, user.id, tariff.id, as_copy=True)
+    elif settings.is_multi_tariff_enabled():
         if request.subscription_id is not None:
             existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
             if existing_subscription is None:
@@ -795,6 +816,7 @@ async def _resolve_tariff_purchase_target(
     if (
         existing_subscription is None
         and settings.is_multi_tariff_enabled()
+        and not _is_copy_purchase(request)
         and (
             isinstance(request, TariffPurchasePreviewRequest)
             or getattr(request, 'selected_device_limit', None) is not None
@@ -1166,6 +1188,12 @@ async def purchase_tariff(
                     'source': 'cabinet',
                     'subscription_id': existing_subscription.id if existing_subscription else None,
                 }
+            if _is_copy_purchase(request):
+                from app.database.crud.subscription import new_tariff_copy_key
+
+                # Корзина копии: после пополнения автопокупка заведёт новую подписку,
+                # а не продлит живую того же тарифа.
+                cart_data['copy_key'] = new_tariff_copy_key()
 
             if checkout_external_id is not None:
                 cart_data['tariff_checkout_id'] = str(request.checkout_id)
@@ -1195,6 +1223,13 @@ async def purchase_tariff(
             )
 
         subscription = existing_subscription
+        copy_key = None
+        if _is_copy_purchase(request):
+            from app.database.crud.subscription import new_tariff_copy_key
+
+            if subscription is not None and not subscription.is_trial:
+                raise HTTPException(status_code=409, detail={'code': 'copy_requires_new_subscription'})
+            copy_key = new_tariff_copy_key()
 
         # Get server squads from tariff
         squads = tariff.allowed_squads or []
@@ -1387,7 +1422,9 @@ async def purchase_tariff(
             if subscription is None and settings.is_multi_tariff_enabled():
                 from app.database.crud.subscription import resolve_trial_conversion_candidate
 
-                _conversion_trial = await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+                _conversion_trial = await resolve_trial_conversion_candidate(
+                    db, user.id, tariff.id, as_copy=_is_copy_purchase(request)
+                )
             killed_trials = await deactivate_user_trial_subscriptions(
                 db,
                 user.id,
@@ -1417,6 +1454,9 @@ async def purchase_tariff(
                     was_trial=_purchase_converts_trial,
                     paid_kopeks=price_kopeks,
                 )
+                if copy_key is not None:
+                    # Триал становится копией тарифа: ключ — до записи тарифа.
+                    subscription.copy_key = copy_key
                 # Extend/change tariff — сохраняем докупленные устройства при продлении того же тарифа
                 subscription = await extend_subscription(
                     db=db,
@@ -1442,6 +1482,7 @@ async def purchase_tariff(
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
+                        copy_key=copy_key,
                         **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
                     )
                 except IntegrityError:

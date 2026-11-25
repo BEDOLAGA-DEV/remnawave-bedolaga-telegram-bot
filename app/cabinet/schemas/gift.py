@@ -146,6 +146,13 @@ class ReceivedGiftResponse(BaseModel):
 
 class ActivateGiftRequest(BaseModel):
     code: str = Field(min_length=1, max_length=255)
+    # Мультитариф, тариф подарка у получателя уже жив: куда добавить дни
+    # (id живой подписки этого тарифа) или активировать отдельной копией.
+    target_subscription_id: int | None = Field(default=None, ge=1, strict=True)
+    as_copy: bool = Field(default=False, strict=True)
+    # Клиент умеет показать выбор «добавить дни к подписке или отдельной копией».
+    # Без флага (кабинет до копий тарифа) — прежнее поведение без вопроса.
+    ask_tariff_choice: bool = Field(default=False, strict=True)
 
 
 class ActivateGiftResponse(BaseModel):

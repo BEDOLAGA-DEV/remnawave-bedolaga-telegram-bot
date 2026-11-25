@@ -64,10 +64,14 @@ class PurchaseQuote:
 
 def purchase_parameters(request) -> dict[str, Any]:
     """Exclude transport IDs from the immutable identity of the order."""
-    return {
+    parameters = {
         key: getattr(request, key, None)
         for key in ('tariff_id', 'period_days', 'traffic_gb', 'subscription_id', 'selected_device_limit')
     }
+    if getattr(request, 'as_copy', False) is True:
+        # Только у копий: отпечатки и цитаты обычных покупок не меняются.
+        parameters['as_copy'] = True
+    return parameters
 
 
 def purchase_fingerprint(parameters: dict[str, Any]) -> str:

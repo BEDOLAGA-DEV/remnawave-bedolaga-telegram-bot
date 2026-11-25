@@ -228,19 +228,6 @@ async def _do_activate_subscription(
     if not sub:
         return BulkUserResult(user_id=user.id, success=False, message='No subscription found', username=user.username)
 
-    # Проверка дубликата в мультитарифном режиме
-    if settings.is_multi_tariff_enabled() and sub.tariff_id:
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing = await get_subscription_by_user_and_tariff(db, user.id, sub.tariff_id)
-        if existing and existing.id != sub.id:
-            return BulkUserResult(
-                user_id=user.id,
-                success=False,
-                message='Cannot activate: user already has an active subscription for this tariff',
-                username=user.username,
-            )
-
     if dry_run:
         return BulkUserResult(
             user_id=user.id,
@@ -264,6 +251,10 @@ async def _do_activate_subscription(
 
     sub = await stage_authorized_activation(db, sub)
     await undo_grace_overlay_echo(db, sub)
+    from app.database.crud.subscription import ensure_tariff_copy_key
+
+    # Рядом живёт обычная подписка того же тарифа — активируемая становится копией.
+    await ensure_tariff_copy_key(db, sub, sub.tariff_id)
     sub.status = SubscriptionStatus.ACTIVE.value
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired
@@ -295,19 +286,6 @@ async def _do_change_tariff(
     if not sub:
         return BulkUserResult(user_id=user.id, success=False, message='No subscription found', username=user.username)
 
-    # Проверка дубликата в мультитарифном режиме
-    if settings.is_multi_tariff_enabled() and tariff.id != sub.tariff_id:
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
-        if existing and existing.id != sub.id:
-            return BulkUserResult(
-                user_id=user.id,
-                success=False,
-                message='User already has an active subscription for the target tariff',
-                username=user.username,
-            )
-
     if dry_run:
         return BulkUserResult(
             user_id=user.id,
@@ -338,6 +316,10 @@ async def _do_change_tariff(
 
     if sub.tariff_id != tariff.id:
         sub.daily_devices_billing_version = 0
+        from app.database.crud.subscription import ensure_tariff_copy_key
+
+        # Тариф уже есть в другой подписке — эта станет его копией.
+        await ensure_tariff_copy_key(db, sub, tariff.id)
     sub.tariff_id = tariff.id
     if managed_panel is not None:
         sub.tariff = tariff
@@ -754,19 +736,14 @@ async def _do_grant_subscription(
     is_multi_tariff = settings.is_multi_tariff_enabled()
     subs = getattr(user, 'subscriptions', None) or []
 
-    # Check for existing active subscription
+    # Тариф у пользователя уже живёт: выдача — явное создание новой подписки,
+    # она становится ещё одной копией тарифа.
+    copy_key = None
     if is_multi_tariff:
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff, new_tariff_copy_key
 
-        existing = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
-        if existing:
-            return BulkUserResult(
-                user_id=user.id,
-                success=False,
-                message='Already has subscription for this tariff',
-                username=user.username,
-                subscriptions=_build_subscription_info(subs),
-            )
+        if await get_subscription_by_user_and_tariff(db, user.id, tariff.id):
+            copy_key = new_tariff_copy_key()
     else:
         active_sub = next((s for s in subs if s.is_active), None)
         if active_sub:
@@ -801,6 +778,7 @@ async def _do_grant_subscription(
             is_trial=False,
             tariff_id=tariff.id,
             connected_squads=connected_squads,
+            copy_key=copy_key,
         )
     except IntegrityError:
         await db.rollback()

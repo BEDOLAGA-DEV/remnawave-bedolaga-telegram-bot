@@ -47,6 +47,8 @@ from app.utils.subscription_utils import (
     resolve_tariff_renewal_device_limit,
 )
 
+from .common import TARIFF_COPY_STATE_KEY, is_tariff_copy_data as _is_tariff_copy_data
+
 
 logger = structlog.get_logger(__name__)
 
@@ -828,6 +830,10 @@ def _calculate_custom_tariff_price(
     return period_price, traffic_price, total_price
 
 
+async def _is_tariff_copy_purchase(state, tariff_id: int) -> bool:
+    return state is not None and _is_tariff_copy_data(await state.get_data(), tariff_id)
+
+
 async def _resolve_purchase_subscription(db, db_user, tariff, state=None, *, source_data=None):
     if not settings.is_multi_tariff_enabled():
         return await get_subscription_by_user_id(db, db_user.id)
@@ -836,6 +842,10 @@ async def _resolve_purchase_subscription(db, db_user, tariff, state=None, *, sou
 
     if source_data is None:
         source_data = await state.get_data() if state else {}
+    if _is_tariff_copy_data(source_data, tariff.id):
+        # Новая копия: продлевать нечего. Истёкшую копию или триал покупка
+        # подхватит сама (create_paid_subscription с copy_key).
+        return None
     source_id = source_data.get('target_subscription_id') or source_data.get('active_subscription_id')
     if source_id:
         selected = await get_subscription_by_id_for_user(db, int(source_id), db_user.id)
@@ -894,11 +904,13 @@ async def _bind_tariff_purchase_keyboard(
 
     if not fixed:
         subscription = await _resolve_purchase_subscription(db, db_user, tariff, state)
-    choice = (await state.get_data()).get('tariff_device_selection') or {}
+    state_data = await state.get_data()
+    as_copy = _is_tariff_copy_data(state_data, tariff.id)
+    choice = state_data.get('tariff_device_selection') or {}
     if subscription is None and settings.is_multi_tariff_enabled() and choice.get('tariff_id') == tariff.id:
         from app.database.crud.subscription import resolve_trial_conversion_candidate
 
-        subscription = await resolve_trial_conversion_candidate(db, db_user.id, tariff.id)
+        subscription = await resolve_trial_conversion_candidate(db, db_user.id, tariff.id, as_copy=as_copy)
     cart = {
         'cart_mode': 'daily_tariff_purchase' if tariff.is_daily else 'tariff_purchase',
         'tariff_id': tariff.id,
@@ -907,6 +919,12 @@ async def _bind_tariff_purchase_keyboard(
         'custom_traffic_gb': custom_traffic_gb if tariff.can_purchase_custom_traffic() else None,
         'tariff_checkout_id': str(uuid4()),
     }
+    if as_copy:
+        from app.database.crud.subscription import new_tariff_copy_key
+
+        # Ключ — на каждый показанный чекаут: повтор этого же чекаута упрётся в
+        # уникальность ключа, а следующая покупка копии получит свой.
+        cart['copy_key'] = new_tariff_copy_key()
     devices, selected = await _purchase_device_selection(tariff, subscription, state)
     if selected is not None:
         from types import SimpleNamespace
@@ -1268,20 +1286,11 @@ async def show_tariffs_list(
         return
 
     # Один доступный тариф — сразу к периоду/подтверждению, без экрана «выбора из одной кнопки».
-    # Кроме случая, когда покупать нечего: в мультитарифе `_proceed_with_selected_tariff`
-    # на уже активном тарифе только показывает всплывающее уведомление и выходит,
-    # ничего не перерисовывая, — кнопка «Купить подписку» выглядела бы мёртвой.
-    # Тогда показываем список: там тариф помечен галочкой и понятно, почему.
+    # Если он у человека уже есть, `_proceed_with_selected_tariff` сам спросит, продлить
+    # имеющуюся подписку или купить ещё одну.
     if len(tariffs) == 1:
-        _already_owned = False
-        if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_active_subscriptions_by_user_id
-
-            _active = await get_active_subscriptions_by_user_id(db, db_user.id)
-            _already_owned = any(s.tariff_id == tariffs[0].id and not s.is_trial for s in _active)
-        if not _already_owned:
-            await _proceed_with_selected_tariff(callback, db_user, db, state, tariffs[0].id, skip_selection=True)
-            return
+        await _proceed_with_selected_tariff(callback, db_user, db, state, tariffs[0].id, skip_selection=True)
+        return
 
     # В мульти-тарифе определяем какие тарифы уже куплены
     purchased_tariff_ids: set[int] = set()
@@ -1358,21 +1367,15 @@ async def _proceed_with_selected_tariff(
         await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
         return
 
-    # В мульти-тарифе проверяем не куплен ли уже этот тариф
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+    # В мульти-тарифе тариф может уже жить у человека: тогда спрашиваем, продлить
+    # имеющуюся подписку или купить ещё одну копию. Ответ «ещё одну» приходит
+    # сюда же с признаком копии в состоянии.
+    if settings.is_multi_tariff_enabled() and not await _is_tariff_copy_purchase(state, tariff_id):
+        from app.database.crud.subscription import get_live_subscriptions_by_user_and_tariff
 
-        _active = await get_active_subscriptions_by_user_id(db, db_user.id)
-        _existing = next((s for s in _active if s.tariff_id == tariff_id and not s.is_trial), None)
-        if _existing:
-            days_left = local_days_until(_existing.end_date) if _existing.end_date else 0
-            await callback.answer(
-                texts.t(
-                    'TARIFF_PURCHASE_ALREADY_ACTIVE',
-                    'Тариф «{name}» уже активен ({days} дн.). Продлите через "Мои подписки".',
-                ).format(name=tariff.name, days=days_left),
-                show_alert=True,
-            )
+        owned = await get_live_subscriptions_by_user_and_tariff(db, db_user.id, tariff_id)
+        if owned:
+            await _show_tariff_copy_choice(callback, db_user, tariff, owned, back_callback)
             return
 
     # Проверяем, суточный ли это тариф
@@ -1483,6 +1486,8 @@ async def _proceed_with_selected_tariff(
             bound = (await state.get_data()).get('restored_tariff_checkout')
             if bound and bound['cart'].get('selected_device_limit') is not None:
                 cart_data.update(bound['cart'])
+            elif bound and bound['cart'].get('copy_key'):
+                cart_data['copy_key'] = bound['cart']['copy_key']
             if not await user_cart_service.save_user_cart(db_user.id, cart_data):
                 await callback.answer(
                     texts.t('TARIFF_PURCHASE_CART_UNAVAILABLE', 'Не удалось сохранить заказ. Попробуйте ещё раз.'),
@@ -1617,7 +1622,85 @@ async def select_tariff(
 ):
     """Обрабатывает выбор тарифа."""
     tariff_id = int(callback.data.split(':')[1])
+    # Новый выбор из списка — новый вопрос: прошлое «купить ещё одну» не переносится.
+    await state.update_data(**{TARIFF_COPY_STATE_KEY: None})
     await _proceed_with_selected_tariff(callback, db_user, db, state, tariff_id)
+
+
+def _tariff_copy_choice_keyboard(tariff: Tariff, owned: list, back_callback: str, texts) -> InlineKeyboardMarkup:
+    from app.utils.timezone import format_local_datetime
+
+    rows = []
+    for subscription in owned:
+        until = format_local_datetime(subscription.end_date, '%d.%m.%Y')
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('TARIFF_COPY_EXTEND_BUTTON', '🔄 Продлить: до {date}').format(date=until),
+                    callback_data=f'tariff_extend:{subscription.id}:{tariff.id}',
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('TARIFF_COPY_BUY_BUTTON', '➕ Купить ещё одну'),
+                callback_data=f'tariff_copy:{tariff.id}',
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_tariff_copy_choice(callback, db_user: User, tariff: Tariff, owned: list, back_callback: str) -> None:
+    """Тариф уже есть: продлить имеющуюся подписку (какую) или купить ещё одну."""
+    texts = get_texts(db_user.language)
+    await callback.message.edit_text(
+        texts.t(
+            'TARIFF_COPY_CHOICE_TEXT',
+            '📦 <b>{name}</b> у вас уже есть.\n\n'
+            'Продлите имеющуюся подписку или купите ещё одну — у каждой подписки '
+            'свои устройства, трафик и ссылка подключения.',
+        ).format(name=html.escape(tariff.name)),
+        reply_markup=_tariff_copy_choice_keyboard(tariff, owned, back_callback, texts),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@error_handler
+async def buy_tariff_copy(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """«Купить ещё одну»: дальше обычная покупка тарифа, но новой подпиской."""
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+    if not settings.is_multi_tariff_enabled():
+        await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+        return
+    from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+    active = await get_active_subscriptions_by_user_id(db, db_user.id)
+    if sum(not sub.is_trial for sub in active) >= settings.get_max_active_subscriptions():
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_MAX_SUBSCRIPTIONS', '❌ Максимум подписок: {max}').format(
+                max=settings.get_max_active_subscriptions()
+            ),
+            show_alert=True,
+        )
+        return
+    skip_selection = bool((await state.get_data()).get('tariff_selection_skipped'))
+    await state.update_data(
+        **{TARIFF_COPY_STATE_KEY: tariff_id},
+        target_subscription_id=None,
+        active_subscription_id=None,
+        tariff_device_selection=None,
+    )
+    await _proceed_with_selected_tariff(callback, db_user, db, state, tariff_id, skip_selection=skip_selection)
 
 
 @error_handler
@@ -1885,7 +1968,11 @@ async def _confirm_tariff_checkout(callback, state, db_user, db, tariff, period)
         )
         return True
 
-    if cart.get('subscription_id') is not None:
+    if cart.get('copy_key'):
+        from app.database.crud.subscription import get_subscription_by_copy_key
+
+        subscription = await get_subscription_by_copy_key(db, cart['copy_key'], user_id)
+    elif cart.get('subscription_id') is not None:
         subscription = await get_subscription_by_id_for_user(db, cart['subscription_id'], user_id)
     else:
         active = await get_active_subscriptions_by_user_id(db, user_id)
@@ -2197,7 +2284,7 @@ async def select_tariff_period(
             'subscription_id': _existing_sub.id if _existing_sub else None,
         }
         bound_cart = (await state.get_data())['restored_tariff_checkout']['cart']
-        for key in ('selected_device_limit', 'device_parameters', 'device_quote_terms', 'subscription_id'):
+        for key in ('selected_device_limit', 'device_parameters', 'device_quote_terms', 'subscription_id', 'copy_key'):
             if key in bound_cart:
                 cart_data[key] = bound_cart[key]
         saved = await user_cart_service.save_user_cart(db_user.id, cart_data)
@@ -2359,7 +2446,12 @@ async def confirm_daily_tariff_purchase(
         return
     from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-    active_target = await get_subscription_by_user_and_tariff(db, db_user.id, tariff.id)
+    copy_key = None
+    if _is_tariff_copy_data(selection_data, tariff.id):
+        from app.database.crud.subscription import new_tariff_copy_key
+
+        copy_key = ((bound or {}).get('cart') or {}).get('copy_key') or new_tariff_copy_key()
+    active_target = None if copy_key else await get_subscription_by_user_and_tariff(db, db_user.id, tariff.id)
     if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
         await callback.answer(
             texts.t(
@@ -2503,6 +2595,7 @@ async def confirm_daily_tariff_purchase(
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 commit=False,
+                copy_key=copy_key,
             )
         subscription.last_daily_charge_at = datetime.now(UTC)
         subscription.is_daily_paused = False
@@ -3620,13 +3713,9 @@ async def show_tariff_switch_list(
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
 
-    # Filter out ALL tariffs user already has active subscriptions for
-    if settings.is_multi_tariff_enabled():
-        _all_active = await get_active_subscriptions_by_user_id(db, db_user.id)
-        _purchased_ids = {s.tariff_id for s in _all_active if s.tariff_id}
-        available_tariffs = [t for t in tariffs if t.id not in _purchased_ids]
-    else:
-        available_tariffs = [t for t in tariffs if t.id != current_tariff_id]
+    # Сменить можно на любой тариф, кроме текущего. Тариф, который у человека уже
+    # есть в другой подписке, тоже доступен: эта подписка станет его копией.
+    available_tariffs = [t for t in tariffs if t.id != current_tariff_id]
 
     # Фильтруем по разрешённым направлениям (upgrade/downgrade)
     current_tariff = await get_tariff_by_id(db, current_tariff_id) if current_tariff_id else None
@@ -4115,6 +4204,10 @@ async def confirm_tariff_switch(
                 )
             else:
                 effective_device_limit = tariff.device_limit
+                from app.database.crud.subscription import ensure_tariff_copy_key
+
+                # Тариф уже есть в другой подписке — эта станет его копией.
+                await ensure_tariff_copy_key(db, subscription, tariff.id)
             subscription = await extend_subscription(
                 db,
                 subscription,
@@ -4442,6 +4535,10 @@ async def confirm_daily_tariff_switch(
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
         if subscription.tariff_id != tariff.id:
             subscription.daily_devices_billing_version = 0
+            from app.database.crud.subscription import ensure_tariff_copy_key
+
+            # Тариф уже есть в другой подписке — эта станет его копией.
+            await ensure_tariff_copy_key(db, subscription, tariff.id)
         subscription.tariff_id = tariff.id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.device_limit = (
@@ -4887,13 +4984,9 @@ async def show_instant_switch_list(
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
 
-    # Filter out ALL tariffs user already has active subscriptions for
-    if settings.is_multi_tariff_enabled():
-        _all_active_instant = await get_active_subscriptions_by_user_id(db, db_user.id)
-        _purchased_ids_instant = {s.tariff_id for s in _all_active_instant if s.tariff_id}
-        available_tariffs = [t for t in tariffs if t.id not in _purchased_ids_instant]
-    else:
-        available_tariffs = [t for t in tariffs if t.id != current_tariff.id]
+    # Сменить можно на любой тариф, кроме текущего. Тариф, который у человека уже
+    # есть в другой подписке, тоже доступен: эта подписка станет его копией.
+    available_tariffs = [t for t in tariffs if t.id != current_tariff.id]
 
     # Фильтруем по разрешённым направлениям (upgrade/downgrade)
     available_tariffs = _filter_tariffs_by_switch_direction(available_tariffs, current_tariff, remaining_days, db_user)
@@ -5238,9 +5331,11 @@ async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tari
 
     texts = get_texts(db_user.language)
     data = await state.get_data()
+    # Покупка ещё одной копии тарифа идёт к провайдеру тем же признаком.
+    copy_arguments = {'as_copy': True} if _is_tariff_copy_data(data, tariff.id) else {}
     choice = data.get('tariff_device_selection') or {}
     if choice.get('tariff_id') != tariff.id:
-        return {}
+        return copy_arguments
     selected = choice.get('limit')
     checkout = data.get('restored_tariff_checkout') or {}
     cart = checkout.get('cart') or {}
@@ -5257,8 +5352,11 @@ async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tari
         )
         if valid:
             return {
-                key: consent[key]
-                for key in ('selected_device_limit', 'quote_id', 'checkout_id', 'channel', 'subscription_id')
+                **{
+                    key: consent[key]
+                    for key in ('selected_device_limit', 'quote_id', 'checkout_id', 'channel', 'subscription_id')
+                },
+                **({'as_copy': True} if consent.get('as_copy') else {}),
             }
     else:
         expected = _saved_tariff_checkout_external_id(db_user.id, checkout.get('identity') or {}).rsplit(':', 1)[-1][
@@ -5280,6 +5378,7 @@ async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tari
                     selected_device_limit=selected,
                     subscription_id=cart.get('subscription_id'),
                     channel='telegram',
+                    **copy_arguments,
                 )
             except ValueError as error:
                 await callback.answer(_localize_recurrent_purchase_error(error, db_user.language), show_alert=True)
@@ -5295,6 +5394,7 @@ async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tari
                 subscription_id=cart.get('subscription_id'),
                 source_identity=checkout['identity'],
                 token=token,
+                **copy_arguments,
             )
             await state.update_data(recurrent_device_checkout=consent)
             await callback.message.edit_text(
@@ -5582,6 +5682,10 @@ async def confirm_instant_switch(
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+        from app.database.crud.subscription import ensure_tariff_copy_key
+
+        # Тариф уже есть в другой подписке — эта станет его копией.
+        await ensure_tariff_copy_key(db, subscription, new_tariff.id)
         subscription.tariff_id = new_tariff.id
         subscription.daily_devices_billing_version = 0
         subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
@@ -5933,11 +6037,18 @@ async def return_to_saved_tariff_cart(
             texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
         )
         return
+    # Корзина копии тарифа: продлевать нечего, и найденная по тарифу живая
+    # подписка не должна превратить покупку копии в продление.
+    as_copy = bool(cart_data.get('copy_key')) and cart_mode != 'extend' and settings.is_multi_tariff_enabled()
+    if as_copy:
+        await state.update_data(**{TARIFF_COPY_STATE_KEY: tariff_id})
     if source_id is not None:
         subscription = await get_subscription_by_id_for_user(db, source_id, db_user.id)
         if subscription is None:
             await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
             return
+    elif as_copy:
+        subscription = None
     else:
         subscription = await _resolve_purchase_subscription(db, db_user, tariff)
     if cart_mode == 'extend' and (subscription is None or subscription.tariff_id != tariff_id):
@@ -6358,6 +6469,8 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Выбор тарифа
     dp.callback_query.register(select_tariff, F.data.startswith('tariff_select:'))
+    # Тариф уже есть — купить ещё одну копию
+    dp.callback_query.register(buy_tariff_copy, F.data.startswith('tariff_copy:'))
 
     # Выбор периода
     dp.callback_query.register(handle_tariff_devices_change, F.data.startswith('tariff_devices:'))

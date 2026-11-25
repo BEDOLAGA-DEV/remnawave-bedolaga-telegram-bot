@@ -30,6 +30,7 @@ from app.services.gift_claim_service import (
 )
 from app.services.guest_purchase_service import (
     GuestPurchaseError,
+    TariffChoiceRequiredError,
     _find_or_create_user,
     activate_purchase as activate_guest_purchase,
     create_purchase,
@@ -245,6 +246,13 @@ class GiftClaimRequest(BaseModel):
     account the gift binds to. No auth — whoever holds the link can claim."""
 
     email: str = Field(min_length=3, max_length=255)
+    # Мультитариф, тариф подарка у получателя уже жив: куда добавить дни
+    # (id живой подписки этого тарифа) или активировать отдельной копией.
+    target_subscription_id: int | None = Field(default=None, ge=1, strict=True)
+    as_copy: bool = Field(default=False, strict=True)
+    # Клиент умеет показать выбор «добавить дни к подписке или отдельной копией».
+    # Без флага (кабинет до копий тарифа) — прежнее поведение без вопроса.
+    ask_tariff_choice: bool = Field(default=False, strict=True)
 
     @model_validator(mode='after')
     def validate_email(self) -> 'GiftClaimRequest':
@@ -578,22 +586,47 @@ async def get_purchase_status(
     return response
 
 
+class ActivatePurchaseRequest(BaseModel):
+    """Optional answer for a multi-tariff purchase whose tariff is already live."""
+
+    # Мультитариф, тариф подарка у получателя уже жив: куда добавить дни
+    # (id живой подписки этого тарифа) или активировать отдельной копией.
+    target_subscription_id: int | None = Field(default=None, ge=1, strict=True)
+    as_copy: bool = Field(default=False, strict=True)
+    # Клиент умеет показать выбор «добавить дни к подписке или отдельной копией».
+    # Без флага (кабинет до копий тарифа) — прежнее поведение без вопроса.
+    ask_tariff_choice: bool = Field(default=False, strict=True)
+
+
 @router.post('/activate/{token}', response_model=PurchaseStatusResponse)
 async def activate_purchase(
     token: str,
     raw_request: Request,
+    body: ActivatePurchaseRequest | None = None,
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Activate a pending guest purchase, replacing the user's current subscription.
 
-    No authentication required (token is the secret).
+    No authentication required (token is the secret). Multi-tariff: when the
+    purchased tariff is already live for the account, answers 409
+    ``tariff_choice_required`` until the body names the subscription to extend or
+    asks for a separate copy.
     """
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'activate_purchase', limit=5, window=60, fail_closed=True):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
 
+    choice = body or ActivatePurchaseRequest()
     try:
-        purchase = await activate_guest_purchase(db, token)
+        purchase = await activate_guest_purchase(
+            db,
+            token,
+            target_subscription_id=choice.target_subscription_id,
+            as_copy=choice.as_copy,
+            ask_tariff_choice=choice.ask_tariff_choice,
+        )
+    except TariffChoiceRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.as_detail()) from exc
     except GuestPurchaseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -699,7 +732,13 @@ async def claim_gift(
             claimant_user_id=user.id,
             claim_input=token,
             allow_legacy_short=False,
+            target_subscription_id=body.target_subscription_id,
+            as_copy=body.as_copy,
+            ask_tariff_choice=body.ask_tariff_choice,
         )
+    except TariffChoiceRequiredError as exc:
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.as_detail()) from exc
     except GiftClaimNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Gift not found') from exc
     except GiftClaimAlreadyOwnedError as exc:

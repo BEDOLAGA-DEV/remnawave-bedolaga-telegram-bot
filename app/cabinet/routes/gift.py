@@ -43,6 +43,7 @@ from app.services.gift_purchase_service import (
 )
 from app.services.guest_purchase_service import (
     GuestPurchaseError,
+    TariffChoiceRequiredError,
     create_purchase,
     notify_gift_claim_available,
 )
@@ -758,7 +759,12 @@ async def activate_gift_by_code(
             claimant_user_id=user.id,
             claim_input=raw_code,
             allow_legacy_short=True,
+            target_subscription_id=body.target_subscription_id,
+            as_copy=body.as_copy,
+            ask_tariff_choice=body.ask_tariff_choice,
         )
+    except TariffChoiceRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.as_detail()) from exc
     except GiftClaimNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST if len(raw_code) < 8 else status.HTTP_404_NOT_FOUND,

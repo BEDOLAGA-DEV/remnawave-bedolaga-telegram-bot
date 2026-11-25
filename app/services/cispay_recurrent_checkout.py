@@ -33,7 +33,7 @@ async def _other_recurring(db, subscription_id):
     return False
 
 
-async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription_id, channel):
+async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription_id, channel, as_copy=False):
     from app.services.pricing_engine import pricing_engine
     from app.services.tariff_purchase_devices import resolve_purchase_device_selection
 
@@ -42,6 +42,8 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
         raise ValueError(policy['reason'] or 'user_restricted')
     if not settings.is_tariffs_mode():
         raise ValueError('tariffs_required')
+    if as_copy and (subscription_id is not None or not settings.is_multi_tariff_enabled()):
+        raise ValueError('checkout_conflict')
     tariff = await db.get(Tariff, tariff_id, populate_existing=True)
     if tariff is None or not tariff.is_active:
         raise ValueError('tariff_unavailable')
@@ -52,27 +54,7 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
     if not tariff.has_configured_price_for_period(days):
         raise ValueError('period_unavailable')
     from app.database.crud.cispay_subscriptions import LIVE_STATUSES
-
-    pending = select(CisPaySubscription.id).where(
-        CisPaySubscription.owner_id == user.id, CisPaySubscription.status.in_(LIVE_STATUSES)
-    )
-    if settings.is_multi_tariff_enabled():
-        pending = pending.join(Subscription, Subscription.id == CisPaySubscription.subscription_id).where(
-            Subscription.tariff_id == tariff.id
-        )
-    if await db.scalar(pending.limit(1)) is not None:
-        raise ValueError('recurrent_already_exists')
     from app.services.payhot_recurrent_guard import LIVE_STATUSES as PAYHOT_LIVE_STATUSES
-
-    payhot_pending = select(PayHotAgreement.id).where(
-        PayHotAgreement.owner_id == user.id, PayHotAgreement.status.in_(PAYHOT_LIVE_STATUSES)
-    )
-    if settings.is_multi_tariff_enabled():
-        payhot_pending = payhot_pending.join(Subscription, Subscription.id == PayHotAgreement.subscription_id).where(
-            Subscription.tariff_id == tariff.id
-        )
-    if await db.scalar(payhot_pending.limit(1)) is not None:
-        raise ValueError('recurrent_already_exists')
 
     target = None
     if subscription_id is not None:
@@ -81,6 +63,30 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
             .where(Subscription.id == subscription_id, Subscription.user_id == user.id)
             .execution_options(populate_existing=True)
         )
+    # Чужая живая привязка того же тарифа мешает, только если обе строки обычные:
+    # их списания оживили бы две обычные подписки одного тарифа, и вторая упала бы
+    # в частичный индекс (деньги взяты, продления нет). Копия со своим ключом
+    # с обычной строкой не сталкивается.
+    if not as_copy and getattr(target, 'copy_key', None) is None:
+        pending = select(CisPaySubscription.id).where(
+            CisPaySubscription.owner_id == user.id, CisPaySubscription.status.in_(LIVE_STATUSES)
+        )
+        payhot_pending = select(PayHotAgreement.id).where(
+            PayHotAgreement.owner_id == user.id, PayHotAgreement.status.in_(PAYHOT_LIVE_STATUSES)
+        )
+        if settings.is_multi_tariff_enabled():
+            pending = pending.join(Subscription, Subscription.id == CisPaySubscription.subscription_id).where(
+                Subscription.tariff_id == tariff.id, Subscription.copy_key.is_(None)
+            )
+            payhot_pending = payhot_pending.join(
+                Subscription, Subscription.id == PayHotAgreement.subscription_id
+            ).where(Subscription.tariff_id == tariff.id, Subscription.copy_key.is_(None))
+        if await db.scalar(pending.limit(1)) is not None:
+            raise ValueError('recurrent_already_exists')
+        if await db.scalar(payhot_pending.limit(1)) is not None:
+            raise ValueError('recurrent_already_exists')
+
+    if subscription_id is not None:
         if target is None:
             raise ValueError('subscription_not_found')
         if target.status == 'disabled':
@@ -101,9 +107,12 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
             )
         ).all()
     )
-    if any(
+    # Новая подписка рядом с живой того же тарифа — только явной покупкой копии.
+    # Выбранную подписку соседние копии тарифа не касаются: если она оживает
+    # рядом с живой обычной, при оформлении она станет копией.
+    if not as_copy and any(
         (target is None or row.id != target.id)
-        and (not settings.is_multi_tariff_enabled() or row.tariff_id == tariff.id)
+        and (not settings.is_multi_tariff_enabled() or (row.tariff_id == tariff.id and target is None))
         for row in candidates
     ):
         raise ValueError('select_existing_subscription')
@@ -134,6 +143,8 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
         if target and target.is_trial
         else None,
         channel=channel,
+        # Только у копий: снимки согласий обычных покупок не меняются.
+        **({'as_copy': True} if as_copy else {}),
     )
 
 
@@ -146,6 +157,7 @@ async def quote_cispay_purchase(
     device_limit: int | None = None,
     subscription_id: int | None = None,
     channel: str,
+    as_copy: bool = False,
 ) -> dict:
     from app.services.tariff_purchase_quote import save_purchase_quote
 
@@ -157,6 +169,7 @@ async def quote_cispay_purchase(
         device_limit=device_limit,
         subscription_id=subscription_id,
         channel=channel,
+        as_copy=as_copy,
     )
     quote_id, expires = await save_purchase_quote(user.id, f'cispay:{channel}', terms)
     return {
@@ -170,7 +183,11 @@ async def quote_cispay_purchase(
 
 async def purchase_cispay_quote(db, *, user, quote_id: str, checkout_id: str, channel: str) -> dict:
     from app.database.crud.cispay_subscriptions import reserve_agreement
-    from app.database.crud.subscription import create_sbp_pending_subscription
+    from app.database.crud.subscription import (
+        create_sbp_pending_subscription,
+        ensure_tariff_copy_key,
+        new_tariff_copy_key,
+    )
     from app.services.cispay_recurrent_service import create_cispay_agreement
     from app.services.tariff_purchase_quote import load_purchase_quote
 
@@ -201,6 +218,7 @@ async def purchase_cispay_quote(db, *, user, quote_id: str, checkout_id: str, ch
             device_limit=agreed['device_limit'],
             subscription_id=agreed['source_subscription_id'],
             channel=channel,
+            as_copy=bool(agreed.get('as_copy')),
         )
         if fresh != agreed:
             raise ValueError('quote_changed')
@@ -208,9 +226,18 @@ async def purchase_cispay_quote(db, *, user, quote_id: str, checkout_id: str, ch
         if target_id is None:
             tariff = await db.get(Tariff, fresh['tariff_id'])
             target = await create_sbp_pending_subscription(
-                db, user.id, tariff, device_limit=fresh['device_limit'], commit=False
+                db,
+                user.id,
+                tariff,
+                device_limit=fresh['device_limit'],
+                commit=False,
+                copy_key=new_tariff_copy_key() if fresh.get('as_copy') else None,
             )
             target_id = target.id
+        else:
+            # Выбранная подписка оживёт первым списанием; рядом с живой обычной
+            # того же тарифа она становится копией.
+            await ensure_tariff_copy_key(db, await db.get(Subscription, target_id), fresh['tariff_id'])
         agreement = await reserve_agreement(
             db,
             user_id=user.id,

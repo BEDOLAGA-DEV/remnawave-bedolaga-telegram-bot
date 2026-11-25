@@ -2,7 +2,12 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.subscription import get_subscription_by_id_for_user, get_subscription_by_user_and_tariff
+from app.config import settings
+from app.database.crud.subscription import (
+    ensure_tariff_copy_key,
+    get_subscription_by_id_for_user,
+    get_subscription_by_user_and_tariff,
+)
 from app.database.models import Subscription
 
 
@@ -20,10 +25,48 @@ async def resolve_recurrent_purchase_selection(
         # Binding/charge callbacks renew the existing row. Mutating its tariff
         # before payment would give unpaid access and corrupt cancellation flow.
         raise ValueError('Для перехода с classic или другого тарифа оплатите с баланса')
+    if settings.is_multi_tariff_enabled():
+        # Человек выбрал эту подписку сам. Если она не живая, а рядом живёт обычная
+        # подписка того же тарифа, первое списание оживит её копией: ключ ставится
+        # сейчас, до привязки, иначе оживление упрётся в частичный индекс (деньги
+        # взяты, продления нет). Живую подписку продлевать можно и рядом с копиями.
+        await ensure_tariff_copy_key(db, subscription, tariff_id)
+        return subscription
+    # Одиночный режим копий не знает: вторая живая строка тарифа упала бы в индекс
+    # на первом списании.
     active = await get_subscription_by_user_and_tariff(db, user_id, tariff_id)
     if active is not None and active.id != subscription.id:
         raise ValueError('Тариф уже активен в другой подписке — выберите её для продления')
     return subscription
+
+
+async def resolve_new_copy_placeholder(db: AsyncSession, *, user_id: int, tariff) -> Subscription:
+    """Заготовка под новую копию тарифа для оформления через автопродление.
+
+    Нетронутая заготовка копии (ни одного списания: дата окончания равна дате
+    начала) переиспользуется — повторное нажатие не плодит истёкшие строки.
+    Иначе создаётся новая со своим ключом копии.
+    """
+    from sqlalchemy import select
+
+    from app.database.crud.subscription import create_sbp_pending_subscription, new_tariff_copy_key
+
+    placeholder = await db.scalar(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.tariff_id == tariff.id,
+            Subscription.copy_key.is_not(None),
+            Subscription.status == 'expired',
+            Subscription.is_trial.is_(False),
+            Subscription.start_date == Subscription.end_date,
+        )
+        .order_by(Subscription.id.desc())
+        .limit(1)
+    )
+    if placeholder is not None:
+        return placeholder
+    return await create_sbp_pending_subscription(db, user_id, tariff, copy_key=new_tariff_copy_key())
 
 
 async def resolve_lava_purchase_product(product_id):
@@ -99,7 +142,7 @@ def validate_recurrent_setup_terms(subscription, provider, amount, charge_days, 
         raise ValueError('quote_changed')
 
 
-async def _resolve_new_device_target(db, user, tariff, subscription_id, parameters=None):
+async def _resolve_new_device_target(db, user, tariff, subscription_id, parameters=None, *, as_copy=False):
     from app.config import settings
     from app.database.crud.subscription import get_subscription_by_user_id
 
@@ -108,6 +151,12 @@ async def _resolve_new_device_target(db, user, tariff, subscription_id, paramete
     group = user.get_primary_promo_group()
     if not tariff.is_available_for_promo_group(group.id if group else None):
         raise ValueError('tariff_unavailable')
+    if as_copy:
+        # Новая копия тарифа: живые подписки тарифа — не цель этой покупки, а
+        # повтор того же чекаута ловит намерение по checkout_id.
+        if subscription_id is not None or not settings.is_multi_tariff_enabled():
+            raise ValueError('checkout_conflict')
+        return None
     if subscription_id is not None:
         target = await resolve_recurrent_purchase_selection(
             db, user_id=user.id, tariff_id=tariff.id, subscription_id=subscription_id
@@ -129,8 +178,8 @@ async def _resolve_new_device_target(db, user, tariff, subscription_id, paramete
     return None
 
 
-def _recurrent_parameters(tariff_id, provider, selected_device_limit, subscription_id, channel):
-    return dict(
+def _recurrent_parameters(tariff_id, provider, selected_device_limit, subscription_id, channel, as_copy=False):
+    parameters = dict(
         tariff_id=tariff_id,
         provider=provider,
         selected_device_limit=selected_device_limit,
@@ -138,16 +187,20 @@ def _recurrent_parameters(tariff_id, provider, selected_device_limit, subscripti
         channel=channel,
         kind='recurrent_devices',
     )
+    if as_copy:
+        # Только для копий: отпечатки уже сохранённых обычных чекаутов не меняются.
+        parameters['as_copy'] = True
+    return parameters
 
 
 async def preview_recurrent_purchase(
-    db, *, user, tariff, provider, selected_device_limit, subscription_id=None, channel='cabinet'
+    db, *, user, tariff, provider, selected_device_limit, subscription_id=None, channel='cabinet', as_copy=False
 ):
     from app.services.tariff_purchase_devices import resolve_purchase_device_selection
     from app.services.tariff_purchase_quote import save_purchase_quote
 
-    parameters = _recurrent_parameters(tariff.id, provider, selected_device_limit, subscription_id, channel)
-    recovery = await _resolve_new_device_target(db, user, tariff, subscription_id, parameters)
+    parameters = _recurrent_parameters(tariff.id, provider, selected_device_limit, subscription_id, channel, as_copy)
+    recovery = await _resolve_new_device_target(db, user, tariff, subscription_id, parameters, as_copy=as_copy)
     if recovery is not None:
         parameters = recovery.parameters['request']
     selection = resolve_purchase_device_selection(tariff, None, selected_device_limit)
@@ -170,14 +223,24 @@ async def preview_recurrent_purchase(
 
 
 async def prepare_recurrent_device_purchase(
-    db, *, user, tariff, provider, selected_device_limit, quote_id, checkout_id, subscription_id=None, channel='cabinet'
+    db,
+    *,
+    user,
+    tariff,
+    provider,
+    selected_device_limit,
+    quote_id,
+    checkout_id,
+    subscription_id=None,
+    channel='cabinet',
+    as_copy=False,
 ):
     """Atomically bind one checkout to its new unpaid row, never rewrite paid limits."""
     from uuid import UUID
 
     from sqlalchemy import select
 
-    from app.database.crud.subscription import create_sbp_pending_subscription
+    from app.database.crud.subscription import create_sbp_pending_subscription, new_tariff_copy_key
     from app.database.crud.user import lock_user_for_update
     from app.database.models import TariffPurchaseIntent
     from app.services.tariff_purchase_devices import resolve_purchase_device_selection
@@ -186,7 +249,7 @@ async def prepare_recurrent_device_purchase(
     if selected_device_limit is None or quote_id is None or checkout_id is None:
         raise ValueError('device_consent_required')
     checkout_id, quote_id = str(UUID(str(checkout_id))), UUID(str(quote_id))
-    parameters = _recurrent_parameters(tariff.id, provider, selected_device_limit, subscription_id, channel)
+    parameters = _recurrent_parameters(tariff.id, provider, selected_device_limit, subscription_id, channel, as_copy)
     fingerprint = purchase_fingerprint(parameters)
     user = await lock_user_for_update(db, user)
     intent = await db.scalar(
@@ -230,14 +293,19 @@ async def prepare_recurrent_device_purchase(
                 terms = fresh_terms
                 intent.parameters = {'request': parameters, 'terms': terms}
     else:
-        await _resolve_new_device_target(db, user, tariff, subscription_id)
+        await _resolve_new_device_target(db, user, tariff, subscription_id, as_copy=as_copy)
         selection = resolve_purchase_device_selection(tariff, None, selected_device_limit)
         terms = await calculate_recurrent_purchase_terms(tariff, provider, selection.effective_limit)
         agreed = await load_purchase_quote(user.id, f'recurrent:{channel}', quote_id)
         if agreed != {'request': parameters, 'terms': terms}:
             raise ValueError('quote_changed')
         subscription = await create_sbp_pending_subscription(
-            db, user.id, tariff, device_limit=selection.effective_limit, commit=False
+            db,
+            user.id,
+            tariff,
+            device_limit=selection.effective_limit,
+            commit=False,
+            copy_key=new_tariff_copy_key() if as_copy else None,
         )
         if tariff.is_daily:
             subscription.daily_devices_billing_version = 1

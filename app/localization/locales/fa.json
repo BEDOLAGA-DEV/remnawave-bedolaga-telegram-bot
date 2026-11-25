@@ -7058,5 +7058,12 @@
   "SUBSCRIPTION_MIRROR_MAIN": "اصلی",
   "SUBSCRIPTION_MIRROR_SELECTOR": "پیوند: {label} ▾",
   "SUBSCRIPTION_MIRROR_CHOOSE": "پیوند اتصال را انتخاب کنید:",
-  "SUBSCRIPTION_MIRROR_SELECTED": "پیوند این اتصال: {label}"
+  "SUBSCRIPTION_MIRROR_SELECTED": "پیوند این اتصال: {label}",
+  "TARIFF_COPY_CHOICE_TEXT": "📦 شما هم‌اکنون <b>{name}</b> را دارید.\n\nاشتراک فعلی را تمدید کنید یا یکی دیگر بخرید — هر اشتراک دستگاه‌ها، ترافیک و لینک اتصال خودش را دارد.",
+  "TARIFF_COPY_EXTEND_BUTTON": "🔄 تمدید: تا {date}",
+  "TARIFF_COPY_BUY_BUTTON": "➕ خرید یکی دیگر",
+  "ADMIN_TARIFF_COPY_CHOICE_TEXT": "📦 کاربر هم‌اکنون <b>{name}</b> را دارد.\n\nاشتراک فعلی را تمدید کنید یا یکی دیگر بخرید — هر اشتراک دستگاه‌ها، ترافیک و لینک اتصال خودش را دارد.",
+  "GIFT_COPY_CHOICE_TEXT": "🎁 شما هم‌اکنون تعرفهٔ این هدیه را دارید.\n\nروزها را به اشتراک فعلی اضافه کنید یا هدیه را به‌صورت اشتراکی جداگانه فعال کنید — با دستگاه‌ها، ترافیک و لینک اتصال خودش.",
+  "GIFT_COPY_EXTEND_BUTTON": "🔄 افزودن به اشتراک: تا {date}",
+  "GIFT_COPY_NEW_BUTTON": "➕ به‌صورت اشتراک جداگانه"
 }

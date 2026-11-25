@@ -915,6 +915,10 @@ async def _auto_purchase_tariff(
     # deletion/ownership change may have invalidated an earlier ORM instance.
     user = await lock_user_for_pricing(db, user.id)
 
+    # Покупка ещё одной копии тарифа, который у человека уже живёт: продлевать
+    # нечего, живые подписки тарифа — не источник покупки.
+    copy_key = cart_data.get('copy_key') if settings.is_multi_tariff_enabled() else None
+
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
@@ -925,6 +929,8 @@ async def _auto_purchase_tariff(
                 (s for s in active_subs if s.id == int(_cart_sub_id)),
                 None,
             )
+        elif copy_key:
+            existing_subscription = None
         else:
             existing_subscription = next(
                 (s for s in active_subs if s.tariff_id == tariff_id),
@@ -943,10 +949,20 @@ async def _auto_purchase_tariff(
                     'Автопокупка: выбранная подписка не найдена', user_id=user.id, subscription_id=_cart_sub_id
                 )
                 return False
-        else:
+        elif not copy_key:
             existing_subscription = await get_subscription_by_user_and_tariff(
                 db, user.id, tariff_id, include_inactive=True
             )
+
+    if copy_key and existing_subscription is not None and not existing_subscription.is_trial:
+        # Источник копии — только конвертируемый триал. Живая платная подписка
+        # здесь значит устаревшую корзину: продлить её вместо новой копии нельзя.
+        logger.warning(
+            'Покупка копии тарифа указывает на платную подписку — отказ',
+            user_id=user.id,
+            subscription_id=existing_subscription.id,
+        )
+        return False
 
     if existing_subscription is not None:
         from app.services.cispay_recurrent_guard import require_no_cispay
@@ -987,7 +1003,7 @@ async def _auto_purchase_tariff(
     # under the wallet lock, before reserving money for a different source.
     from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-    active_target = await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
+    active_target = None if copy_key else await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
     if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
         logger.warning(
             'Tariff purchase conflicts with another owned subscription', user_id=user.id, tariff_id=tariff_id
@@ -1095,7 +1111,9 @@ async def _auto_purchase_tariff(
     if existing_subscription is None:
         from app.database.crud.subscription import resolve_trial_conversion_candidate
 
-        conversion_candidate = await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+        conversion_candidate = await resolve_trial_conversion_candidate(
+            db, user.id, tariff.id, as_copy=copy_key is not None
+        )
     atomic_purchase = (
         device_checkout
         or managed_purchase
@@ -1148,6 +1166,9 @@ async def _auto_purchase_tariff(
             # Сохраняем докупленные устройства при продлении того же тарифа
             effective_device_limit = device_limit
             was_trial_conversion = bool(existing_subscription.is_trial)
+            if copy_key:
+                # Триал становится копией тарифа: ключ — до записи тарифа.
+                existing_subscription.copy_key = copy_key
             subscription = await extend_subscription(
                 db,
                 existing_subscription,
@@ -1176,6 +1197,7 @@ async def _auto_purchase_tariff(
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 conversion_trial=conversion_candidate,
+                copy_key=copy_key,
                 **({'commit': False} if atomic_purchase else {}),
             )
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
@@ -1469,12 +1491,19 @@ async def _auto_purchase_daily_tariff(
 
     from app.database.crud.subscription import get_subscription_by_id_for_user, get_subscription_by_user_and_tariff
 
+    # Копия суточного тарифа рядом с живой подпиской того же тарифа.
+    copy_key = cart_data.get('copy_key') if settings.is_multi_tariff_enabled() else None
     source_id = _safe_int(cart_data.get('subscription_id'))
     if cart_data.get('subscription_id') is not None:
         existing_subscription = await get_subscription_by_id_for_user(db, source_id, user.id) if source_id else None
         if existing_subscription is None:
             logger.warning('Daily purchase: selected subscription not found', user_id=user.id)
             return False
+        if copy_key and not existing_subscription.is_trial:
+            logger.warning('Daily copy purchase points at a paid subscription', user_id=user.id)
+            return False
+    elif copy_key:
+        existing_subscription = None
     elif settings.is_multi_tariff_enabled():
         existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
         if existing_subscription is None:
@@ -1514,7 +1543,7 @@ async def _auto_purchase_daily_tariff(
             'Daily purchase: selected tariff already active', user_id=user.id, subscription_id=existing_subscription.id
         )
         return False
-    active_target = await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
+    active_target = None if copy_key else await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
     if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
         logger.warning('Daily purchase conflicts with another owned subscription', user_id=user.id, tariff_id=tariff_id)
         return False
@@ -1568,6 +1597,8 @@ async def _auto_purchase_daily_tariff(
         if existing_subscription:
             subscription = existing_subscription
             was_trial_conversion = bool(subscription.is_trial)
+            if copy_key:
+                subscription.copy_key = copy_key
             if subscription.tariff_id != tariff.id:
                 subscription.daily_devices_billing_version = 0
             subscription.tariff_id = tariff.id
@@ -1593,6 +1624,7 @@ async def _auto_purchase_daily_tariff(
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 commit=False,
+                copy_key=copy_key,
             )
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
         subscription.last_daily_charge_at = datetime.now(UTC)

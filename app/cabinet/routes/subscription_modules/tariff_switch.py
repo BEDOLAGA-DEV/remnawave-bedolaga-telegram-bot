@@ -244,17 +244,6 @@ async def switch_tariff(
             detail='No active subscription with tariff',
         )
 
-    # Guard: prevent switching to a tariff the user already owns (multi-tariff)
-    if settings.is_multi_tariff_enabled() and request.tariff_id:
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-        if existing_target and existing_target.id != resolved.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail='You already have an active subscription for the target tariff',
-            )
-
     from app.database.crud.user import lock_user_for_pricing
     from app.services.traffic_purchase_service import prepare_user_tariff_switch
 
@@ -265,12 +254,6 @@ async def switch_tariff(
     user = await lock_user_for_pricing(db, user.id)
     if subscription.user_id != user.id:
         raise HTTPException(status_code=404, detail='Subscription not found')
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-        if existing_target and existing_target.id != subscription.id:
-            raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
     # Use actual_status for correct status check (handles time-based expiration)
     actual_status = subscription.actual_status
@@ -500,6 +483,10 @@ async def switch_tariff(
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)
 
+    from app.database.crud.subscription import ensure_tariff_copy_key
+
+    # Тариф уже есть в другой подписке — эта станет его копией (ключ до записи тарифа).
+    await ensure_tariff_copy_key(db, subscription, new_tariff.id)
     subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
     if accounting_panel is not None:

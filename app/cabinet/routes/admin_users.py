@@ -1321,16 +1321,14 @@ async def update_user_subscription(
                 detail='User already has a subscription. Enable multi-tariff mode to add more.',
             )
 
-        # Проверка: нельзя создать вторую активную подписку с тем же тарифом
+        # Тариф у пользователя уже живёт: создание админом — явная новая подписка,
+        # она становится ещё одной копией тарифа.
+        copy_key = None
         if is_multi_tariff and request.tariff_id:
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff, new_tariff_copy_key
 
-            existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail='User already has an active subscription for this tariff. Extend it instead.',
-                )
+            if await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id):
+                copy_key = new_tariff_copy_key()
 
         from app.database.crud.subscription import create_paid_subscription
 
@@ -1363,6 +1361,7 @@ async def update_user_subscription(
                 is_trial=is_trial,
                 tariff_id=request.tariff_id,
                 connected_squads=connected_squads,
+                copy_key=copy_key,
             )
         except IntegrityError:
             await db.rollback()
@@ -1494,18 +1493,6 @@ async def update_user_subscription(
                 detail='Tariff not found',
             )
 
-        # Проверка: нельзя сменить тариф, если у пользователя уже есть
-        # другая активная подписка с целевым тарифом
-        if is_multi_tariff and request.tariff_id != subscription.tariff_id:
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-            if existing and existing.id != subscription.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail='User already has an active subscription for the target tariff',
-                )
-
         # Preserve extra purchased devices above the old tariff's base limit
         from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
         from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
@@ -1520,6 +1507,10 @@ async def update_user_subscription(
 
         if subscription.tariff_id != request.tariff_id:
             subscription.daily_devices_billing_version = 0
+            from app.database.crud.subscription import ensure_tariff_copy_key
+
+            # Тариф уже есть в другой подписке — эта станет его копией.
+            await ensure_tariff_copy_key(db, subscription, request.tariff_id)
         subscription.tariff_id = request.tariff_id
         if managed_panel is not None:
             subscription.tariff = tariff
@@ -1782,17 +1773,10 @@ async def update_user_subscription(
         from app.services.traffic_accounting_service import stage_authorized_activation
 
         subscription = await stage_authorized_activation(db, subscription)
-        # Проверка: нельзя активировать, если у пользователя уже есть
-        # другая активная подписка с тем же тарифом
-        if is_multi_tariff and subscription.tariff_id:
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+        # Рядом живёт обычная подписка того же тарифа — активируемая становится копией.
+        from app.database.crud.subscription import ensure_tariff_copy_key
 
-            existing = await get_subscription_by_user_and_tariff(db, user.id, subscription.tariff_id)
-            if existing and existing.id != subscription.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail='Cannot activate: user already has an active subscription for this tariff',
-                )
+        await ensure_tariff_copy_key(db, subscription, subscription.tariff_id)
 
         subscription.status = SubscriptionStatus.ACTIVE.value
         if subscription.end_date and subscription.end_date <= datetime.now(UTC):

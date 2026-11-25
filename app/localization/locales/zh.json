@@ -7058,5 +7058,12 @@
   "SUBSCRIPTION_MIRROR_MAIN": "主链接",
   "SUBSCRIPTION_MIRROR_SELECTOR": "链接：{label} ▾",
   "SUBSCRIPTION_MIRROR_CHOOSE": "选择连接链接：",
-  "SUBSCRIPTION_MIRROR_SELECTED": "此次连接的链接：{label}"
+  "SUBSCRIPTION_MIRROR_SELECTED": "此次连接的链接：{label}",
+  "TARIFF_COPY_CHOICE_TEXT": "📦 您已拥有 <b>{name}</b>。\n\n续订现有订阅或再购买一份 — 每个订阅都有自己的设备、流量和连接链接。",
+  "TARIFF_COPY_EXTEND_BUTTON": "🔄 续订：至 {date}",
+  "TARIFF_COPY_BUY_BUTTON": "➕ 再购买一份",
+  "ADMIN_TARIFF_COPY_CHOICE_TEXT": "📦 该用户已拥有 <b>{name}</b>。\n\n续订现有订阅或再购买一份 — 每个订阅都有自己的设备、流量和连接链接。",
+  "GIFT_COPY_CHOICE_TEXT": "🎁 您已拥有此礼物的套餐。\n\n将天数添加到现有订阅，或将礼物作为单独的订阅激活 — 它将拥有自己的设备、流量和连接链接。",
+  "GIFT_COPY_EXTEND_BUTTON": "🔄 添加到订阅：至 {date}",
+  "GIFT_COPY_NEW_BUTTON": "➕ 作为单独的订阅"
 }
