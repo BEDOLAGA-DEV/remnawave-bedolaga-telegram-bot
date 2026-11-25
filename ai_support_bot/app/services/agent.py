@@ -1109,6 +1109,7 @@ class SupportAgent:
             'answer': answer_text,
             'escalate': escalate,
             'escalation_reason': escalation_reason,
+            'conversation_id': conversation.id,
             'hedged': hedged,
             'knowledge_used': len(knowledge),
             'model': model_used,

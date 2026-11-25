@@ -1,9 +1,10 @@
+import re
 import time
 
 import structlog
 
 from ai_support_bot.app.core.config import settings
-from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services import hub_events, settings_store
 
 
 logger = structlog.get_logger(__name__)
@@ -36,6 +37,18 @@ def _throttled(key: str) -> bool:
 
 _DEFAULT_HINT = 'Бот продолжает отвечать, но без части данных — проверьте логи и схему БД.'
 
+_SQL_TAIL_RE = re.compile(r'\[(?:SQL|parameters):.*', re.DOTALL)
+_EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+')
+_LONG_NUMBER_RE = re.compile(r'\d{5,}')
+
+
+def _without_client_data(details: str) -> str:
+    """Текст сбоя для внешнего журнала: без SQL с параметрами, почты и длинных чисел (ID клиентов)."""
+    text = _SQL_TAIL_RE.sub('', details or '')
+    text = _EMAIL_RE.sub('[email]', text)
+    text = _LONG_NUMBER_RE.sub('[id]', text)
+    return text.strip()[:300]
+
 
 async def alert_admins(key: str, title: str, details: str, hint: str | None = None) -> None:
     logger.error('degradation alert', alert_key=key, title=title, details=details)
@@ -46,6 +59,14 @@ async def alert_admins(key: str, title: str, details: str, hint: str | None = No
         return
     if _throttled(key):
         return
+
+    hub_events.emit(
+        'support.error',
+        title=title,
+        text='\n'.join(part for part in (_without_client_data(details), hint or _DEFAULT_HINT) if part),
+        severity='warn',
+        silent=True,
+    )
 
     message = (
         f'🛑 <b>Сбой ИИ-поддержки: {_escape(title)}</b>\n\n'

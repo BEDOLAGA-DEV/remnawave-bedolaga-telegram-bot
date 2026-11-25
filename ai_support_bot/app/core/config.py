@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     ALERT_ADMINS_ON_FAILURE: bool = True  # уведомлять админов о сбоях чтения основной БД
     ALERT_THROTTLE_SECONDS: int = 900
 
+    HUB_URL: str = ''  # общий журнал событий slig-hub; пусто = события никуда не дублируются
+    HUB_TOKEN: str = ''
+
     NAVIGATION_ENABLED: bool = True  # подсказывать пути к разделам бота и веб-кабинета
     NAVIGATION_LANGUAGES: str = 'ru'  # языки, для которых дерево навигации строится при запуске
     NAVIGATION_TTL: int = 900  # 0 = не пересобирать дерево автоматически, только при запуске

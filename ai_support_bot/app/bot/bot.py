@@ -27,7 +27,7 @@ from ai_support_bot.app.bot.message_queue import MessageQueue
 from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.database import AsyncSessionLocal
-from ai_support_bot.app.services import alerting, business_control, settings_store
+from ai_support_bot.app.services import alerting, business_control, hub_events, settings_store
 from ai_support_bot.app.services.agent import support_agent
 from ai_support_bot.app.services.emoji_style import unwrap
 from ai_support_bot.app.services.openai_client import OpenAIError
@@ -570,6 +570,21 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             notify_text += '\n\n' + escape(result['support_context'])
         delivered = await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id,
                                          photo=result.get('support_photo'), photos=result.get('support_photos'))
+        # Копия в общий журнал: без данных клиента и ответа бота, без звука — команда уже уведомлена.
+        reason_code = result.get('escalation_reason') or 'unspecified'
+        hub_events.emit(
+            'support.handoff',
+            title=reason_code,
+            text=reason,
+            severity='warn',
+            quote=(question or '')[:500],
+            data={
+                'reason': reason_code,
+                'conversation_id': result.get('conversation_id'),
+                'business': business_connection is not None,
+            },
+            silent=True,
+        )
         turn = _business_turn.get() if business_connection is not None else None
         if turn is not None:
             # Pause only when someone got the handoff with the «Вернуть ИИ» button, otherwise the chat
