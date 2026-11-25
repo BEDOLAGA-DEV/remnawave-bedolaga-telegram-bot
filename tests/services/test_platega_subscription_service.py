@@ -471,3 +471,140 @@ async def test_create_subscription_sends_payer_metadata(monkeypatch: pytest.Monk
     await service.create_subscription(payer=PAYER, amount=199.0, currency='RUB', interval=3)
 
     assert captured['json_data']['metadata'] == {'userId': '555', 'userName': '@neo', 'user_email': '555@telegram.org'}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_throttles_repeat_polls_and_aborts_on_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Повторный цикл сразу следом не опрашивает заново уже сверенные ACTIVE/CANCELLED
+    даже после внутреннего db.rollback() при синке панели, а ошибки транспорта не
+    утраиваются ретраями и прерывают оставшиеся HTTP-вызовы текущего тика после двух подряд."""
+    from unittest.mock import AsyncMock
+
+    import aiohttp
+
+    from app.services.payment import platega as platega_module
+
+    _configure(monkeypatch, PLATEGA_RECURRENT_ENABLED=True)
+    status_mock = AsyncMock(return_value=({'subscriptionId': 'ps-act-1', 'status': 'active'}, 200))
+    get_mock = AsyncMock(return_value={'subscriptionId': 'ps-can-1', 'status': 'cancelled'})
+    monkeypatch.setattr(PlategaService, 'get_subscription_status', status_mock)
+    monkeypatch.setattr(PlategaService, 'get_subscription', get_mock)
+
+    async def replay_with_panel_rollback(db, record, remote):
+        # Эмулирует db.rollback() внутри best-effort синка панели (экспайрит ORM-атрибуты record).
+        await db.rollback()
+        return 0
+
+    monkeypatch.setattr(platega_module, 'replay_missed_platega_charges', replay_with_panel_rollback)
+
+    async with _memory_session(monkeypatch) as db:
+        await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-act-1',
+            status='ACTIVE',
+        )
+        await sub_crud.create_platega_subscription(
+            db,
+            user_id=2,
+            subscription_id=2,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-can-1',
+            status='CANCELLED',
+        )
+        svc = MonitoringService()
+        await svc._reconcile_platega_subscriptions(db)
+        assert status_mock.await_count == 1
+        assert get_mock.await_count == 1
+
+        await svc._reconcile_platega_subscriptions(db)
+        assert status_mock.await_count == 1
+        assert get_mock.await_count == 1
+
+    monkeypatch.undo()
+    _configure(monkeypatch, PLATEGA_RECURRENT_ENABLED=True)
+    http_attempts = 0
+
+    class _TimeoutRequestCtx:
+        async def __aenter__(self):
+            nonlocal http_attempts
+            http_attempts += 1
+            raise TimeoutError('ddos-guard read timeout')
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(aiohttp.ClientSession, 'request', lambda self, *a, **kw: _TimeoutRequestCtx())
+    async with _memory_session(monkeypatch) as db:
+        for idx in range(5):
+            await sub_crud.create_platega_subscription(
+                db,
+                user_id=10 + idx,
+                subscription_id=10 + idx,
+                tariff_id=None,
+                interval=3,
+                charge_days=30,
+                amount_kopeks=19900,
+                redirect_url=None,
+                platega_subscription_id=f'ps-to-{idx}',
+                status='PENDING',
+            )
+        await MonitoringService()._reconcile_platega_subscriptions(db)
+        # _max_retries=1 + отсечка consecutive_timeouts>=2 → ровно 2 попытки вместо 5*3=15.
+        assert http_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sweep_replays_paid_period_and_recovers_after_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Свип отменённых подписок доначисляет пропущенный оплаченный период и не
+    теряет следующие записи после rollback на сбое первой."""
+    from unittest.mock import AsyncMock
+
+    from app.services.payment import platega as platega_module
+
+    _configure(monkeypatch, PLATEGA_RECURRENT_ENABLED=False)
+    monkeypatch.setattr(PlategaService, 'get_subscription', AsyncMock(return_value={'status': 'Cancelled'}))
+    cancel_mock = AsyncMock()
+    monkeypatch.setattr(PlategaService, 'cancel_subscription', cancel_mock)
+    seen: list[str] = []
+
+    async def fake_replay(db, record, remote):
+        seen.append(record.platega_subscription_id)
+        if len(seen) == 1:
+            await db.rollback()
+            raise TimeoutError('panel timeout after billing commit')
+        return 0
+
+    monkeypatch.setattr(platega_module, 'replay_missed_platega_charges', fake_replay)
+    async with _memory_session(monkeypatch) as db:
+        for sid in ('cancelled-paid-1', 'cancelled-paid-2'):
+            await sub_crud.create_platega_subscription(
+                db,
+                user_id=1,
+                subscription_id=1,
+                tariff_id=None,
+                interval=3,
+                charge_days=30,
+                amount_kopeks=19900,
+                redirect_url=None,
+                platega_subscription_id=sid,
+                status='CANCELLED',
+            )
+        svc = MonitoringService()
+        await svc._reconcile_platega_subscriptions(db)
+        assert set(seen) == {'cancelled-paid-1', 'cancelled-paid-2'}
+        cancel_mock.assert_not_awaited()
+        # Упавшая первая запись не попала в кэш и должна перепровериться в следующем цикле.
+        await svc._reconcile_platega_subscriptions(db)
+        assert seen.count('cancelled-paid-1') == 2
+        assert seen.count('cancelled-paid-2') == 1

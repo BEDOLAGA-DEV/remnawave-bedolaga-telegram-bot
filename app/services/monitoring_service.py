@@ -2940,6 +2940,8 @@ class MonitoringService:
         Platega отсекается ниже по is_configured.
         """
         try:
+            import time
+
             from app.database.crud import platega_subscription as sub_crud
             from app.services.platega_recurrent import platega_reconcile_decision
             from app.services.platega_service import PlategaService
@@ -2947,13 +2949,67 @@ class MonitoringService:
             service = PlategaService()
             if not service.is_configured:
                 return
+            # Фоновая сверка не утраивает таймауты: неудавшийся вызов повторит следующий тик.
+            service._max_retries = 1
+
+            checked_at: dict[int, float] = getattr(self, '_platega_sub_checked_at', None)
+            if checked_at is None:
+                checked_at = {}
+                self._platega_sub_checked_at = checked_at
+            cancelled_checked_at: dict[int, float] = getattr(self, '_platega_cancelled_checked_at', None)
+            if cancelled_checked_at is None:
+                cancelled_checked_at = {}
+                self._platega_cancelled_checked_at = cancelled_checked_at
+
+            min_interval_by_status = {'PENDING': 0.0, 'PAST_DUE': 900.0, 'ACTIVE': 1800.0}
+            cancelled_recheck_sec = 21600.0
+            max_active_http_per_tick = 15
+            max_cancelled_http_per_tick = 10
+            inter_request_delay_sec = 0.25
+            http_calls = 0
+            consecutive_timeouts = 0
 
             records = await sub_crud.list_platega_subscriptions_by_statuses(db, ['PENDING', 'ACTIVE', 'PAST_DUE'])
+            live_active_ids = {rec.id for rec in records}
+            for stale_id in list(checked_at):
+                if stale_id not in live_active_ids:
+                    checked_at.pop(stale_id, None)
+            now_mono = time.monotonic()
+            due_ids: list[int] = []
+            for rec in sorted(records, key=lambda r: checked_at.get(r.id, 0.0)):
+                if not rec.platega_subscription_id:
+                    due_ids.append(rec.id)
+                    continue
+                min_gap = min_interval_by_status.get(rec.status or '', 900.0)
+                if now_mono - checked_at.get(rec.id, -1e9) >= min_gap:
+                    due_ids.append(rec.id)
 
-            for record in records:
+            active_http_done = 0
+            for record_id in due_ids:
+                if consecutive_timeouts >= 2:
+                    logger.warning(
+                        'Прерван обход Platega-подписок до следующего цикла из-за таймаутов API',
+                        consecutive_timeouts=consecutive_timeouts,
+                    )
+                    break
                 try:
-                    if record.platega_subscription_id:
-                        remote, http_status = await service.get_subscription_status(record.platega_subscription_id)
+                    record = await sub_crud.get_platega_subscription_by_id(db, record_id)
+                    if record is None:
+                        continue
+                    platega_sub_id = record.platega_subscription_id
+                    http_status: int | None = None
+                    if platega_sub_id:
+                        if active_http_done >= max_active_http_per_tick:
+                            continue
+                        if http_calls > 0:
+                            await asyncio.sleep(inter_request_delay_sec)
+                        http_calls += 1
+                        active_http_done += 1
+                        remote, http_status = await service.get_subscription_status(platega_sub_id)
+                        if http_status is None:
+                            consecutive_timeouts += 1
+                        else:
+                            consecutive_timeouts = 0
                         # 404 = провайдер достоверно не знает подписку; None-статус =
                         # транспортный сбой — зависший PENDING хоронить рано.
                         remote_missing = http_status == 404
@@ -2970,6 +3026,15 @@ class MonitoringService:
                         else 0.0
                     )
 
+                    # Перечитываем строку под блокировкой после сетевого GET:
+                    # пока ждали ответ провайдера, пользователь мог отменить привязку.
+                    record = await sub_crud.get_platega_subscription_by_id_for_update(db, record_id)
+                    if record is None:
+                        await db.rollback()
+                        continue
+                    # Снимаем скаляр до commit/replay: синк панели внутри replay при ошибке
+                    # делает db.rollback(), экспайря атрибуты record (MissingGreenlet).
+                    platega_sub_id = record.platega_subscription_id
                     new_status = platega_reconcile_decision(
                         record.status, remote_status, age_minutes, remote_missing=remote_missing
                     )
@@ -2978,12 +3043,14 @@ class MonitoringService:
                         await sub_crud.update_platega_subscription(db, record, status=new_status)
                         logger.info(
                             'Platega-подписка реконсилирована',
-                            local_id=record.id,
-                            platega_subscription_id=record.platega_subscription_id,
+                            local_id=record_id,
+                            platega_subscription_id=platega_sub_id,
                             old_status=previous_status,
                             new_status=new_status,
                             remote_status=remote_status,
                         )
+                    else:
+                        await db.commit()
 
                     # Потерянный CONFIRMED при живом remote: статус чинится выше,
                     # а деньги — здесь. Порядок важен: сначала статус-решение
@@ -2994,10 +3061,13 @@ class MonitoringService:
                         from app.services.payment.platega import replay_missed_platega_charges
 
                         await replay_missed_platega_charges(db, record, remote)
+                    if platega_sub_id and http_status is not None:
+                        checked_at[record_id] = time.monotonic()
                 except Exception as record_error:
+                    await db.rollback()
                     logger.warning(
                         'Не удалось реконсилировать Platega-подписку',
-                        local_id=getattr(record, 'id', None),
+                        local_id=record_id,
                         error=record_error,
                     )
 
@@ -3007,28 +3077,68 @@ class MonitoringService:
             cancelled_records = await sub_crud.list_recently_cancelled_platega_subscriptions(
                 db, datetime.now(UTC) - timedelta(days=30)
             )
-            for record in cancelled_records:
+            live_cancelled_ids = {rec.id for rec in cancelled_records}
+            for stale_id in list(cancelled_checked_at):
+                if stale_id not in live_cancelled_ids:
+                    cancelled_checked_at.pop(stale_id, None)
+            now_mono = time.monotonic()
+            cancelled_ids = [
+                rec.id
+                for rec in sorted(cancelled_records, key=lambda r: cancelled_checked_at.get(r.id, 0.0))
+                if not rec.platega_subscription_id
+                or now_mono - cancelled_checked_at.get(rec.id, -1e9) >= cancelled_recheck_sec
+            ]
+            cancelled_http_done = 0
+            for record_id in cancelled_ids:
+                if consecutive_timeouts >= 2 or cancelled_http_done >= max_cancelled_http_per_tick:
+                    break
                 try:
-                    remote = await service.get_subscription(record.platega_subscription_id)
+                    record = await sub_crud.get_platega_subscription_by_id(db, record_id)
+                    if record is None or record.status != 'CANCELLED':
+                        continue
+                    platega_id = record.platega_subscription_id
+                    if platega_id:
+                        if http_calls > 0:
+                            await asyncio.sleep(inter_request_delay_sec)
+                        http_calls += 1
+                        cancelled_http_done += 1
+                        remote = await service.get_subscription(platega_id)
+                        if remote is None:
+                            consecutive_timeouts += 1
+                        else:
+                            consecutive_timeouts = 0
+                    else:
+                        remote = None
                     remote_status = (
                         str(remote.get('status')).strip().lower()
                         if remote and remote.get('status') is not None
                         else None
                     )
-                    if remote_status in (None, 'cancelled', 'canceled', 'failed'):
-                        continue
-                    cancel_result = await service.cancel_subscription(record.platega_subscription_id)
-                    logger.warning(
-                        'Platega-подписка осталась активной после локальной отмены — повторил отмену',
-                        local_id=record.id,
-                        platega_subscription_id=record.platega_subscription_id,
-                        remote_status=remote_status,
-                        cancel_confirmed=cancel_result is not None,
-                    )
+                    cancel_ok = True
+                    if remote_status not in (None, 'cancelled', 'canceled', 'failed', 'expired'):
+                        if http_calls > 0:
+                            await asyncio.sleep(inter_request_delay_sec)
+                        http_calls += 1
+                        cancel_result = await service.cancel_subscription(platega_id)
+                        cancel_ok = cancel_result is not None
+                        logger.warning(
+                            'Platega-подписка осталась активной после локальной отмены — повторил отмену',
+                            local_id=record_id,
+                            platega_subscription_id=platega_id,
+                            remote_status=remote_status,
+                            cancel_confirmed=cancel_ok,
+                        )
+                    if remote is not None:
+                        from app.services.payment.platega import replay_missed_platega_charges
+
+                        await replay_missed_platega_charges(db, record, remote)
+                        if cancel_ok:
+                            cancelled_checked_at[record_id] = time.monotonic()
                 except Exception as record_error:
+                    await db.rollback()
                     logger.warning(
                         'Не удалось досверить отменённую Platega-подписку',
-                        local_id=getattr(record, 'id', None),
+                        local_id=record_id,
                         error=record_error,
                     )
         except Exception as e:

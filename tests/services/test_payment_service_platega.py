@@ -238,3 +238,56 @@ def test_platega_method_display_helpers() -> None:
     assert settings.get_platega_method_display_title(11) == '💳 Карты (RUB)'
     assert settings.get_platega_method_display_name(999) == 'Метод 999'
     assert settings.get_platega_method_display_title(999) == 'Platega 999'
+
+
+@pytest.mark.anyio('asyncio')
+async def test_late_failed_webhook_preserves_is_paid_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Поздний CANCELED-коллбек поверх уже зачисленного платежа не сбрасывает is_paid,
+    а повторный CONFIRMED не начисляет баланс второй раз."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    service = _make_service(StubPlategaService())
+    db = DummySession()
+    payment = SimpleNamespace(
+        id=55,
+        correlation_id='corr-55',
+        platega_transaction_id='tx-55',
+        status='CONFIRMED',
+        is_paid=True,
+        transaction_id=900,
+        callback_payload=None,
+        updated_at=datetime.now(UTC),
+    )
+
+    monkeypatch.setattr(
+        'app.database.crud.platega.get_platega_payment_by_transaction_id',
+        AsyncMock(return_value=payment),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.platega.get_platega_payment_by_id_for_update',
+        AsyncMock(return_value=payment),
+    )
+    saved_updates: list[dict[str, Any]] = []
+
+    async def fake_update(db_arg: Any, *, payment: Any, **kwargs: Any) -> Any:
+        saved_updates.append(kwargs)
+        for k, v in kwargs.items():
+            setattr(payment, k, v)
+        return payment
+
+    monkeypatch.setattr('app.services.payment_service.update_platega_payment', fake_update, raising=False)
+    finalize_mock = AsyncMock()
+    monkeypatch.setattr(service, '_finalize_platega_payment', finalize_mock)
+
+    ok = await service.process_platega_webhook(db, {'id': 'tx-55', 'status': 'CANCELED'})
+    assert ok is True
+    assert saved_updates and saved_updates[-1]['is_paid'] is True
+    assert payment.is_paid is True
+
+    # Даже если is_paid по какой-то причине был сброшен, наличие transaction_id блокирует повторное зачисление.
+    payment.is_paid = False
+    ok_dup = await service.process_platega_webhook(db, {'id': 'tx-55', 'status': 'CONFIRMED'})
+    assert ok_dup is True
+    finalize_mock.assert_not_awaited()
+    assert payment.is_paid is True

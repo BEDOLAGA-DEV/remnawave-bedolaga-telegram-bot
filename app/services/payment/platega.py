@@ -277,10 +277,10 @@ class PlategaPaymentMixin:
             description=getattr(tariff, 'name', None) or 'Подписка',
         )
 
-        platega_id = (response or {}).get('transactionId')
+        platega_id = (response or {}).get('transactionId') or (response or {}).get('id')
         if not platega_id:
             raise RuntimeError('Platega не вернула transactionId при создании подписки')
-        redirect_url = (response or {}).get('redirect')
+        redirect_url = PlategaService.parse_redirect_url(response)
 
         try:
             record = await sub_crud.create_platega_subscription(
@@ -767,16 +767,18 @@ class PlategaPaymentMixin:
             return False
         payment = locked
 
-        status_raw = str(payload.get('status') or '').upper()
+        status_raw = str(payload.get('status') or '').strip().upper()
         if not status_raw:
             logger.warning('Platega webhook без статуса для платежа', payment_id=payment.id)
             return False
 
         if status_raw in self._SUCCESS_STATUSES:
-            if payment.is_paid:
+            if payment.is_paid or payment.transaction_id:
                 logger.info('Platega платеж уже помечен как оплачен', correlation_id=payment.correlation_id)
                 # Update callback payload without releasing the lock prematurely
                 payment.callback_payload = payload
+                payment.status = status_raw
+                payment.is_paid = True
                 if transaction_id and not payment.platega_transaction_id:
                     payment.platega_transaction_id = transaction_id
                 payment.updated_at = datetime.now(UTC)
@@ -804,7 +806,8 @@ class PlategaPaymentMixin:
                 status=status_raw,
                 callback_payload=payload,
                 platega_transaction_id=transaction_id or None,
-                is_paid=False,
+                # Поздний неуспешный/спорный коллбек не должен затирать факт зачисления средств.
+                is_paid=bool(payment.is_paid or payment.transaction_id),
             )
             logger.info('Platega платеж перешёл в статус', correlation_id=payment.correlation_id, status_raw=status_raw)
             return True
@@ -852,9 +855,13 @@ class PlategaPaymentMixin:
                 locked = await platega_crud.get_platega_payment_by_id_for_update(db, payment.id)
                 if not locked:
                     logger.error('Platega status check: не удалось заблокировать платёж', payment_id=payment.id)
-                elif locked.is_paid:
+                elif locked.is_paid or locked.transaction_id:
                     # Another concurrent handler already processed — skip
                     logger.info('Platega платеж уже оплачен после блокировки', correlation_id=locked.correlation_id)
+                    if not locked.is_paid:
+                        locked.is_paid = True
+                        locked.updated_at = datetime.now(UTC)
+                        await db.commit()
                     payment = locked
                 else:
                     payment = locked

@@ -1298,6 +1298,15 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
     ):
         return '🧪', 'Тестовый платёж — баланс не пополнен'
 
+    if record.method == PaymentMethod.PLATEGA:
+        post_payment = {
+            'disputed': ('⏸', 'Платёж оспаривается'),
+            'chargebacked': ('↩️', 'Возврат по спору'),
+            'partially_refunded': ('↩️', 'Частичный возврат'),
+        }
+        if status in post_payment:
+            return post_payment[status]
+
     if record.is_paid:
         return '✅', 'Оплачено'
 
