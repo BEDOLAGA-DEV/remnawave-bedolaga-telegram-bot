@@ -59,6 +59,114 @@ def _is_trial_unique_violation(exc: IntegrityError) -> bool:
     return UQ_TRIAL_CONSTRAINT.lower() in str(orig).lower()
 
 
+def new_tariff_copy_key() -> str:
+    """Ключ покупки копии тарифа — свой у каждой явной покупки копии.
+
+    Создаётся, когда человек выбирает «купить ещё одну», и едет с покупкой до
+    создания подписки. Повторная обработка той же покупки (двойной клик, повтор
+    вебхука) упирается в уникальность ``copy_key`` — так же, как обычная покупка
+    упирается в ``uq_subscriptions_user_tariff_active``.
+    """
+    return secrets.token_hex(16)
+
+
+class TariffAlreadyActiveError(IntegrityError):
+    """Живая подписка этого тарифа уже есть, а копию никто не просил.
+
+    До копий этот случай ловил частичный уникальный индекс, и вызывающие
+    обрабатывают его как ``IntegrityError`` (возврат денег, 409, «тариф уже
+    активен»). Копия индексом не держится, поэтому рядом с живой копией обычная
+    вставка индекс не заденет — проверка повторяет его в коде и падает тем же
+    классом исключения.
+    """
+
+    def __init__(self, user_id: int, tariff_id: int):
+        self.user_id = user_id
+        self.tariff_id = tariff_id
+        super().__init__(
+            f'user {user_id} already has a live subscription of tariff {tariff_id}',
+            None,
+            Exception(UQ_TRIAL_CONSTRAINT),
+        )
+
+
+async def _has_live_subscription_of_tariff(
+    db: AsyncSession,
+    user_id: int,
+    tariff_id: int,
+    *,
+    exclude_subscription_id: int | None = None,
+    ordinary_only: bool = False,
+) -> bool:
+    """Есть ли у человека живая подписка тарифа (``ordinary_only`` — без ключа копии)."""
+    conditions = [
+        Subscription.user_id == user_id,
+        Subscription.tariff_id == tariff_id,
+        Subscription.status.in_(_ALIVE_SUBSCRIPTION_STATUSES_TUPLE),
+    ]
+    if exclude_subscription_id is not None:
+        conditions.append(Subscription.id != exclude_subscription_id)
+    if ordinary_only:
+        conditions.append(Subscription.copy_key.is_(None))
+    result = await db.execute(select(Subscription.id).where(*conditions).limit(1))
+    return result.scalar_one_or_none() is not None
+
+
+async def ensure_tariff_copy_key(
+    db: AsyncSession,
+    subscription: Subscription,
+    tariff_id: int | None,
+    *,
+    user_id: int | None = None,
+) -> bool:
+    """Пометить подписку копией, если она переходит на тариф, который уже живёт рядом.
+
+    Для явных переводов конкретной подписки на тариф — смена тарифа, назначение
+    админом, перенос при объединении аккаунтов: человек сам выбрал подписку, и
+    если такой тариф у него уже есть, она становится ещё одной копией.
+
+    Вызывать ДО записи нового ``tariff_id`` или ``user_id``: запрос здесь может
+    вызвать автосброс сессии, и строка с уже записанным тарифом упрётся в
+    ``uq_subscriptions_user_tariff_active`` раньше, чем получит ключ. При переносе
+    на другой аккаунт его id передаётся в ``user_id``.
+    """
+    if tariff_id is None or getattr(subscription, 'copy_key', None) or not settings.is_multi_tariff_enabled():
+        # Копии — часть мультитарифа; в одиночном режиме прежний отказ индекса.
+        return False
+    owner_id = user_id if user_id is not None else subscription.user_id
+    if not await _has_live_subscription_of_tariff(
+        db,
+        owner_id,
+        tariff_id,
+        exclude_subscription_id=getattr(subscription, 'id', None),
+        ordinary_only=True,
+    ):
+        return False
+    subscription.copy_key = new_tariff_copy_key()
+    logger.info(
+        'Подписка переходит на уже имеющийся тариф — становится копией',
+        subscription_id=getattr(subscription, 'id', None),
+        user_id=owner_id,
+        tariff_id=tariff_id,
+    )
+    return True
+
+
+async def _latest_expired_subscription_of_tariff(db: AsyncSession, user_id: int, tariff_id: int) -> Subscription | None:
+    """Последняя истёкшая подписка тарифа — её покупка копии реанимирует вместо вставки."""
+    result = await db.execute(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.tariff_id == tariff_id,
+            Subscription.status == SubscriptionStatus.EXPIRED.value,
+        )
+        .order_by(Subscription.end_date.desc(), Subscription.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def generate_unique_short_id(db: AsyncSession, max_attempts: int = 10) -> str:
     """Generate a unique remnawave_short_id (6 hex chars) with collision check."""
     for _ in range(max_attempts):
@@ -507,6 +615,7 @@ async def _convert_trial_subscription_to_paid(
     device_limit: int | None,
     connected_squads: list[str] | None,
     commit: bool,
+    copy_key: str | None = None,
 ) -> Subscription | None:
     """Convert a live or expired trial into the purchased paid tariff in place.
 
@@ -553,6 +662,10 @@ async def _convert_trial_subscription_to_paid(
         return None
 
     final_squads = await _resolve_connected_squads(db, connected_squads, user_id=trial_subscription.user_id)
+    if copy_key is not None:
+        # Триал становится копией тарифа: ключ — до записи тарифа, иначе строка
+        # столкнётся с уже живой подпиской этого тарифа в частичном индексе.
+        trial_subscription.copy_key = copy_key
     subscription = await extend_subscription(
         db,
         trial_subscription,
@@ -609,10 +722,31 @@ async def _trial_conversion_candidate(
     return result.scalar_one_or_none()
 
 
+async def _same_tariff_purchase_target(
+    db: AsyncSession,
+    user_id: int,
+    tariff_id: int,
+    *,
+    as_copy: bool,
+) -> Subscription | None:
+    """Подписка покупаемого тарифа, которую платная покупка увидит первой.
+
+    Обычная покупка смотрит на свежайшую подписку тарифа (живую или нет) и
+    реанимирует её, только если она истекла. Покупка копии рядом с живой
+    подпиской тарифа реанимирует истёкшую копию, если она есть, — человек сохраняет
+    её ссылку и аккаунт панели, — а живые не трогает.
+    """
+    if as_copy:
+        return await _latest_expired_subscription_of_tariff(db, user_id, tariff_id)
+    return await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
+
+
 async def resolve_trial_conversion_candidate(
     db: AsyncSession,
     user_id: int,
     tariff_id: int,
+    *,
+    as_copy: bool = False,
 ) -> Subscription | None:
     """Кандидат конверсии триала, каким его увидит ``create_paid_subscription``.
 
@@ -622,9 +756,10 @@ async def resolve_trial_conversion_candidate(
     если у юзера есть EXPIRED подписка ПОКУПАЕМОГО тарифа, создание уйдёт в
     revive-ветку (#3004) и конверсии не будет — возвращаем None, чтобы
     вызывающий обращался с триалом по-старому (kill + перенос остатка +
-    отключение панельного юзера).
+    отключение панельного юзера). ``as_copy`` — покупка копии тарифа, её
+    передают и в ``create_paid_subscription`` (через ``copy_key``).
     """
-    existing = await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
+    existing = await _same_tariff_purchase_target(db, user_id, tariff_id, as_copy=as_copy)
     if existing is not None and existing.status == SubscriptionStatus.EXPIRED.value:
         return None
     return await _trial_conversion_candidate(db, user_id, existing)
@@ -642,9 +777,10 @@ async def create_paid_subscription(
     tariff_id: int | None = None,
     commit: bool = True,
     conversion_trial: Subscription | None = None,
+    copy_key: str | None = None,
 ) -> Subscription:
-    # Multi-tariff invariant: at most ONE subscription per (user, tariff). If a
-    # subscription for this tariff has EXPIRED, revive it in place instead of
+    # Multi-tariff: an ordinary purchase keeps ONE subscription per (user, tariff).
+    # If a subscription for this tariff has EXPIRED, revive it in place instead of
     # inserting a duplicate — the partial unique index only guards the alive
     # statuses, so expired duplicates otherwise piled up. This includes an EXPIRED
     # TRIAL of the same tariff: re-purchasing converts it in place
@@ -654,9 +790,18 @@ async def create_paid_subscription(
     # This makes the bot/guest paths match the cabinet purchase flow. Scope still
     # narrow: an ACTIVE/LIMITED tariff falls through to the insert (its unique-index
     # "already active" handling); classic mode (tariff_id is None) creates fresh.
+    #
+    # ``copy_key`` — the user explicitly bought ANOTHER copy of a tariff they
+    # already have live. The copy revives an expired subscription of that tariff
+    # if there is one (keeping its link), otherwise converts a trial or inserts a
+    # new row; every path stamps the key, so the copy never collides with the live
+    # ordinary subscription in the partial index.
+    as_copy = copy_key is not None
     if not is_trial and tariff_id is not None and settings.is_multi_tariff_enabled():
-        _existing = await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
+        _existing = await _same_tariff_purchase_target(db, user_id, tariff_id, as_copy=as_copy)
         if _existing is not None and _existing.status == SubscriptionStatus.EXPIRED.value:
+            if as_copy:
+                _existing.copy_key = copy_key
             return await _revive_paid_subscription(
                 db,
                 _existing,
@@ -691,11 +836,17 @@ async def create_paid_subscription(
                 device_limit=device_limit,
                 connected_squads=connected_squads,
                 commit=commit,
+                copy_key=copy_key,
             )
             if _converted is not None:
                 return _converted
             # Гонка: кандидат уже конвертирован конкурентной покупкой — падаем
             # в обычную вставку (две платные подписки, как до фикса).
+
+    if tariff_id is not None and not as_copy and await _has_live_subscription_of_tariff(db, user_id, tariff_id):
+        # Тот же отказ, что давал частичный индекс до копий: рядом с живой копией
+        # обычная вставка индекс не задела бы и молча завела бы ещё одну подписку.
+        raise TariffAlreadyActiveError(user_id, tariff_id)
 
     end_date = datetime.now(UTC) + timedelta(days=duration_days)
 
@@ -720,6 +871,7 @@ async def create_paid_subscription(
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
         remnawave_short_id=short_id,
+        copy_key=copy_key,
     )
 
     db.add(subscription)
@@ -2871,8 +3023,12 @@ async def create_sbp_pending_subscription(
     *,
     device_limit: int | None = None,
     commit: bool = True,
+    copy_key: str | None = None,
 ) -> Subscription:
     """Заготовка подписки под СБП-оформление (покупка через Platega-рекуррент).
+
+    ``copy_key`` — заготовка под копию тарифа, который у человека уже живёт:
+    первый чардж сделает её живой, и без ключа она упёрлась бы в частичный индекс.
 
     Создаётся сразу ИСТЁКШЕЙ (end_date=сейчас): доступ не выдаётся, панель не
     трогается. Первый CONFIRMED-чардж Platega продлит её по каденсу —
@@ -2905,6 +3061,7 @@ async def create_sbp_pending_subscription(
         autopay_enabled=False,
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         remnawave_short_id=short_id,
+        copy_key=copy_key,
     )
 
     db.add(subscription)
@@ -3495,6 +3652,11 @@ async def get_subscription_by_user_and_tariff(
     ``uq_subscriptions_user_tariff_active`` only guards the alive statuses, so
     without this expired duplicates of the same tariff piled up for users.
     Prefers the freshest candidate (latest end_date) — an alive one, if any.
+
+    A user may hold several live copies of one tariff; callers that have nobody
+    to ask (rewards, coupons, webhooks) get the copy with the latest end date.
+    Where the user chooses, list them with
+    ``get_live_subscriptions_by_user_and_tariff`` instead.
     """
     statuses = _ALIVE_SUBSCRIPTION_STATUSES_TUPLE
     if include_inactive:
@@ -3515,6 +3677,45 @@ async def get_subscription_by_user_and_tariff(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_subscription_by_copy_key(db: AsyncSession, copy_key: str, user_id: int) -> Subscription | None:
+    """Подписка, купленная (или реанимированная) покупкой копии с этим ключом."""
+    result = await db.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff))
+        .where(Subscription.copy_key == copy_key, Subscription.user_id == user_id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_live_subscriptions_by_user_and_tariff(
+    db: AsyncSession,
+    user_id: int,
+    tariff_id: int,
+    *,
+    include_trial: bool = False,
+) -> list[Subscription]:
+    """Все живые платные подписки человека на тариф — копии, между которыми он выбирает.
+
+    Непустой список на витрине означает вопрос «продлить имеющуюся или купить ещё
+    одну». Триал сюда не входит: платная покупка его конвертирует, а не продлевает.
+    """
+    conditions = [
+        Subscription.user_id == user_id,
+        Subscription.tariff_id == tariff_id,
+        Subscription.status.in_(_ALIVE_SUBSCRIPTION_STATUSES_TUPLE),
+    ]
+    if not include_trial:
+        conditions.append(Subscription.is_trial.is_(False))
+    result = await db.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff))
+        .where(*conditions)
+        .order_by(Subscription.end_date.desc(), Subscription.id.desc())
+    )
+    return list(result.scalars().all())
 
 
 async def get_alive_trial_subscription(db: AsyncSession, user_id: int) -> Subscription | None:

@@ -93,6 +93,7 @@ async def purchase_with_cashera_recurrent(
     selected_device_limit: int | None = None,
     quote_id: UUID | None = None,
     checkout_id: UUID | None = None,
+    as_copy: bool = False,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -121,6 +122,7 @@ async def purchase_with_cashera_recurrent(
             user=user,
             tariff=tariff,
             **({'subscription_id': subscription_id} if subscription_id is not None else {}),
+            **({'as_copy': True} if as_copy else {}),
             **(
                 {'selected_device_limit': selected_device_limit, 'quote_id': quote_id, 'checkout_id': checkout_id}
                 if any(value is not None for value in (selected_device_limit, quote_id, checkout_id))
@@ -201,6 +203,7 @@ async def preview_cashera_recurrent_purchase(
     tariff_id: int,
     selected_device_limit: int = Query(..., ge=1, le=2_147_483_647),
     subscription_id: int | None = None,
+    as_copy: bool = False,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -221,6 +224,7 @@ async def preview_cashera_recurrent_purchase(
             provider='cashera',
             selected_device_limit=selected_device_limit,
             subscription_id=subscription_id,
+            as_copy=as_copy,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

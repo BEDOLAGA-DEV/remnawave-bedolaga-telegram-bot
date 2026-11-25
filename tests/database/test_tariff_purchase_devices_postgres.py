@@ -645,14 +645,20 @@ async def test_admin_daily_renewal_preserves_devices_it_charges(postgres_databas
             )
             callback.data = 'admin_tariff_buy_select_1_7'
             await inspect.unwrap(admin.admin_buy_tariff_period)(callback, user, db)
+            # Тариф у пользователя уже жив: сначала выбор — продлить эту подписку или купить ещё одну.
+            choice = callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+            assert choice[0][0].callback_data == 'admin_tariff_buy_select_1_7_t10'
+            assert choice[1][0].callback_data == 'admin_tariff_buy_select_1_7_n'
+            callback.data = choice[0][0].callback_data
+            await inspect.unwrap(admin.admin_buy_tariff_period)(callback, user, db)
             buttons = callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
-            assert buttons[0][0].callback_data == 'admin_tariff_buy_confirm_1_7_1_1200'
+            assert buttons[0][0].callback_data == 'admin_tariff_buy_confirm_1_7_1_1200_t10'
             callback.data = buttons[0][0].callback_data
             await inspect.unwrap(admin.admin_buy_tariff_confirm)(callback, user, db)
             confirmation = callback.message.edit_text.await_args
             assert '📱 Устройств: 3' in confirmation.args[0]
             callback.data = confirmation.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
-            assert callback.data.endswith('_1200')
+            assert callback.data.endswith('_1200_t10')
             if price_changed:
                 (await db.get(Tariff, 7)).device_price_kopeks = 6000
                 await db.commit()

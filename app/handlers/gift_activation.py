@@ -4,7 +4,7 @@ import html as html_mod
 
 import structlog
 from aiogram import Dispatcher, F, types
-from aiogram.types import InaccessibleMessage
+from aiogram.types import InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
@@ -17,12 +17,55 @@ from app.services.gift_claim_service import (
     GiftClaimSelfActivationError,
     claim_bound_gift_for_user,
 )
-from app.services.guest_purchase_service import GuestPurchaseError
+from app.services.guest_purchase_service import GuestPurchaseError, TariffChoiceRequiredError
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
 
 _GIFT_NOT_FOUND = 'Подарок не найден или недоступен.'
+GIFT_NEW_COPY = 'n'
+
+
+def gift_tariff_choice_text(texts) -> str:
+    return texts.t(
+        'GIFT_COPY_CHOICE_TEXT',
+        '🎁 Тариф этого подарка у вас уже есть.\n\n'
+        'Добавьте дни к имеющейся подписке или активируйте подарок отдельной подпиской — '
+        'у неё будут свои устройства, трафик и ссылка подключения.',
+    )
+
+
+def gift_tariff_choice_markup(texts, choice: TariffChoiceRequiredError) -> InlineKeyboardMarkup:
+    """Тариф подарка у получателя уже жив: в какую подписку дни или отдельной копией."""
+    rows = []
+    for subscription in choice.subscriptions:
+        until = format_local_datetime(subscription.end_date, '%d.%m.%Y')
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('GIFT_COPY_EXTEND_BUTTON', '🔄 Добавить к подписке: до {date}').format(date=until),
+                    callback_data=f'gift_activate:{choice.purchase_id}:t{subscription.id}',
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('GIFT_COPY_NEW_BUTTON', '➕ Отдельной подпиской'),
+                callback_data=f'gift_activate:{choice.purchase_id}:{GIFT_NEW_COPY}',
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _parse_gift_choice(token: str | None) -> dict:
+    if token == GIFT_NEW_COPY:
+        return {'as_copy': True}
+    if token and token.startswith('t') and token[1:].isdigit():
+        return {'target_subscription_id': int(token[1:])}
+    return {}
 
 
 async def handle_gift_activate(callback: types.CallbackQuery, db_user: User | None = None) -> None:
@@ -35,8 +78,8 @@ async def handle_gift_activate(callback: types.CallbackQuery, db_user: User | No
     if not callback.data:
         return
 
-    parts = callback.data.split(':', 1)
-    if len(parts) != 2:
+    parts = callback.data.split(':')
+    if len(parts) not in (2, 3):
         await callback.answer(texts.t('GIFT_ACTIVATION_NOT_FOUND'), show_alert=True)
         return
 
@@ -45,6 +88,7 @@ async def handle_gift_activate(callback: types.CallbackQuery, db_user: User | No
     except ValueError:
         await callback.answer(texts.t('GIFT_ACTIVATION_NOT_FOUND'), show_alert=True)
         return
+    choice = _parse_gift_choice(parts[2] if len(parts) == 3 else None)
 
     await callback.answer()
     await callback.message.edit_text(texts.t('GIFT_ACTIVATION_IN_PROGRESS'), parse_mode=None)
@@ -62,7 +106,15 @@ async def handle_gift_activate(callback: types.CallbackQuery, db_user: User | No
                 db,
                 claimant_user_id=user.id,
                 purchase_id=purchase_id,
+                **choice,
             )
+        except TariffChoiceRequiredError as required:
+            await callback.message.edit_text(
+                gift_tariff_choice_text(texts),
+                reply_markup=gift_tariff_choice_markup(texts, required),
+                parse_mode=None,
+            )
+            return
         except (GiftClaimNotFoundError, GiftClaimAlreadyOwnedError):
             await callback.message.edit_text(
                 texts.t('GIFT_ACTIVATION_NOT_FOUND', _GIFT_NOT_FOUND),

@@ -7058,5 +7058,12 @@
   "SUBSCRIPTION_MIRROR_MAIN": "Primary",
   "SUBSCRIPTION_MIRROR_SELECTOR": "Link: {label} ▾",
   "SUBSCRIPTION_MIRROR_CHOOSE": "Choose a connection link:",
-  "SUBSCRIPTION_MIRROR_SELECTED": "Link for this connection: {label}"
+  "SUBSCRIPTION_MIRROR_SELECTED": "Link for this connection: {label}",
+  "TARIFF_COPY_CHOICE_TEXT": "📦 You already have <b>{name}</b>.\n\nRenew your current subscription or buy one more — each subscription has its own devices, traffic and connection link.",
+  "TARIFF_COPY_EXTEND_BUTTON": "🔄 Renew: until {date}",
+  "TARIFF_COPY_BUY_BUTTON": "➕ Buy one more",
+  "ADMIN_TARIFF_COPY_CHOICE_TEXT": "📦 The user already has <b>{name}</b>.\n\nRenew the current subscription or buy one more — each subscription has its own devices, traffic and connection link.",
+  "GIFT_COPY_CHOICE_TEXT": "🎁 You already have this gift's plan.\n\nAdd the days to your current subscription or activate the gift as a separate subscription with its own devices, traffic and connection link.",
+  "GIFT_COPY_EXTEND_BUTTON": "🔄 Add to subscription: until {date}",
+  "GIFT_COPY_NEW_BUTTON": "➕ As a separate subscription"
 }

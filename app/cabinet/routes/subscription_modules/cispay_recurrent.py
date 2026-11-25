@@ -19,6 +19,7 @@ class CisPayQuoteRequest(BaseModel):
     period_days: int = Field(ge=7, le=360, strict=True)
     device_limit: int | None = Field(default=None, ge=0, le=2_147_483_647, strict=True)
     subscription_id: int | None = Field(default=None, gt=0, strict=True)
+    as_copy: bool = Field(default=False, strict=True)
 
 
 class CisPayPurchaseRequest(BaseModel):

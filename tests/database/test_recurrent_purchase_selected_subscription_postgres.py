@@ -103,10 +103,14 @@ async def test_selected_row_validated_before_provider(
                 db=db,
             )
 
-        if case == 'selected':
+        if case == 'selected' or (case == 'active_collision' and multi):
+            # В мультитарифе выбранная истёкшая подписка рядом с живой того же
+            # тарифа — законная копия: ключ ставится до привязки.
             result = await invoke()
             assert result['subscription_id'] == 10
             assert enable.await_args.kwargs['subscription'].id == 10
+            if case == 'active_collision':
+                assert (await db.get(Subscription, 10)).copy_key is not None
         else:
             with pytest.raises(ValueError if entry == 'service' else HTTPException) as error:
                 await invoke()

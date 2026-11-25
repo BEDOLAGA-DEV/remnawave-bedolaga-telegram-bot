@@ -56,7 +56,7 @@ from app.services.gift_purchase_service import (
     purchase_gift_from_balance,
     quote_gift_purchase,
 )
-from app.services.guest_purchase_service import GuestPurchaseError
+from app.services.guest_purchase_service import GuestPurchaseError, TariffChoiceRequiredError
 from app.services.user_cart_service import user_cart_service
 from app.states import GiftActivationStates, GiftPurchaseStates
 from app.utils.fsm_selection import mutate_fsm_if_current
@@ -1434,6 +1434,12 @@ async def handle_gift_code_input(
             claim_input=raw_input,
             allow_legacy_short=False,
         )
+    except TariffChoiceRequiredError as required:
+        from app.handlers.gift_activation import gift_tariff_choice_markup, gift_tariff_choice_text
+
+        await state.clear()
+        await message.answer(gift_tariff_choice_text(texts), reply_markup=gift_tariff_choice_markup(texts, required))
+        return
     except GiftClaimNotFoundError:
         await message.answer(
             texts.t(

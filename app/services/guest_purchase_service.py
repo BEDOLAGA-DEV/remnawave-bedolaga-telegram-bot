@@ -177,6 +177,59 @@ class GuestPurchaseError(Exception):
         super().__init__(message)
 
 
+class TariffChoiceRequiredError(GuestPurchaseError):
+    """The recipient already has this tariff live (multi-tariff): ask before activating.
+
+    Add the days to one of ``subscriptions`` (``target_subscription_id``) or activate
+    as one more copy of the tariff (``as_copy``). The purchase stays pending
+    activation and bound to the recipient, so the answer re-enters by purchase id.
+    """
+
+    def __init__(self, purchase_id: int, subscriptions: list):
+        super().__init__('Tariff is already active: choose a subscription to extend or a new copy', 409)
+        self.purchase_id = purchase_id
+        self.subscriptions = subscriptions
+
+    def as_detail(self) -> dict:
+        """Тело ответа 409 для кабинета: из чего выбирать."""
+        return {
+            'code': 'tariff_choice_required',
+            'message': self.message,
+            'subscriptions': [
+                {
+                    'id': subscription.id,
+                    'end_date': subscription.end_date.isoformat(),
+                }
+                for subscription in self.subscriptions
+            ],
+        }
+
+
+async def require_tariff_choice(
+    db: AsyncSession,
+    *,
+    purchase: GuestPurchase,
+    user_id: int,
+    target_subscription_id: int | None,
+    as_copy: bool,
+    ask: bool = True,
+) -> None:
+    """Raise ``TariffChoiceRequiredError`` when a user-facing activation must ask first.
+
+    ``ask=False`` — клиент выбора не показывает (кабинет до копий тарифа): прежнее
+    поведение, дни ложатся в живую подписку тарифа с самой поздней датой.
+    """
+    if not ask or not settings.is_multi_tariff_enabled() or as_copy or target_subscription_id is not None:
+        return
+    if purchase.tariff_id is None:
+        return
+    from app.database.crud.subscription import get_live_subscriptions_by_user_and_tariff
+
+    owned = await get_live_subscriptions_by_user_and_tariff(db, user_id, purchase.tariff_id)
+    if owned:
+        raise TariffChoiceRequiredError(purchase.id, owned)
+
+
 async def validate_and_calculate(
     db: AsyncSession,
     landing: LandingPage,
@@ -1514,12 +1567,26 @@ async def notify_gift_claim_available(
             logger.warning('Failed to send gift link to buyer', purchase_id=purchase.id, exc_info=True)
 
 
-async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notification: bool = False) -> GuestPurchase:
+async def activate_purchase(
+    db: AsyncSession,
+    purchase_token: str,
+    *,
+    skip_notification: bool = False,
+    target_subscription_id: int | None = None,
+    as_copy: bool = False,
+    ask_tariff_choice: bool = False,
+) -> GuestPurchase:
     """Activate a PENDING_ACTIVATION purchase by replacing or creating a subscription.
 
     Uses SELECT ... FOR UPDATE to prevent concurrent activation.
     Raises GuestPurchaseError on validation failures.
     Returns the updated purchase (status=DELIVERED).
+
+    Multi-tariff, the tariff is already live for the recipient: the person chooses.
+    ``target_subscription_id`` — add the days to that live subscription of the
+    tariff; ``as_copy`` — activate as one more copy of the tariff. Without a choice
+    the old rule applies (the live subscription with the latest end date), unless
+    ``ask_tariff_choice`` — then ``TariffChoiceRequiredError`` asks first.
     """
     result = await db.execute(select(GuestPurchase).where(GuestPurchase.token == purchase_token).with_for_update())
     purchase = result.scalars().first()
@@ -1546,6 +1613,15 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     if user is None:
         raise GuestPurchaseError('User not found', status_code=500)
 
+    await require_tariff_choice(
+        db,
+        purchase=purchase,
+        user_id=user.id,
+        target_subscription_id=target_subscription_id,
+        as_copy=as_copy,
+        ask=ask_tariff_choice,
+    )
+
     # Ensure email users have cabinet access
     is_new_account = False
     if user.auth_type == 'email' and not user.password_hash:
@@ -1571,7 +1647,24 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-        if settings.is_multi_tariff_enabled():
+        copy_key = None
+        if settings.is_multi_tariff_enabled() and as_copy:
+            from app.database.crud.subscription import new_tariff_copy_key
+
+            existing_subscription = None
+            copy_key = new_tariff_copy_key()
+        elif settings.is_multi_tariff_enabled() and target_subscription_id is not None:
+            from app.database.crud.subscription import get_subscription_by_id_for_user
+
+            existing_subscription = await get_subscription_by_id_for_user(db, target_subscription_id, user.id)
+            if (
+                existing_subscription is None
+                or existing_subscription.tariff_id != tariff.id
+                or existing_subscription.is_trial
+                or not existing_subscription.is_active
+            ):
+                raise GuestPurchaseError('Selected subscription is unavailable', status_code=409)
+        elif settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
             existing_subscription = await get_subscription_by_user_and_tariff(
@@ -1629,6 +1722,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 tariff_id=tariff.id,
                 update_server_counters=True,
                 commit=False,
+                copy_key=copy_key,
             )
 
         await subscription_service.create_remnawave_user(db, subscription, reset_traffic=reset_traffic)

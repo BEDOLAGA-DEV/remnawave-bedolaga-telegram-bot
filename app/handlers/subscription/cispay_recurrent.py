@@ -18,6 +18,8 @@ from app.services.cispay_recurrent_service import cancel_cispay_agreement
 from app.states import SubscriptionStates
 from app.utils.formatting import format_price_kopeks
 
+from .common import is_tariff_copy_data
+
 
 def _button(text, data=None, url=None):
     return types.InlineKeyboardButton(text=text, callback_data=data, url=url)
@@ -125,6 +127,7 @@ async def purchase_cispay_from_tariff(callback, db_user, db, state):
                 cart.get('selected_device_limit'),
                 cart.get('subscription_id'),
             )
+            as_copy = bool(cart.get('copy_key'))
         elif data.get('selected_tariff_id') == tariff_id:
             days = data.get('custom_days') or data.get('selected_period')
             choice = data.get('tariff_device_selection') or {}
@@ -132,8 +135,12 @@ async def purchase_cispay_from_tariff(callback, db_user, db, state):
             target = (
                 data.get('target_subscription_id') or data.get('active_subscription_id') or data.get('subscription_id')
             )
+            as_copy = is_tariff_copy_data(data, tariff_id)
         else:
             raise ValueError('stale_selection')
+        if as_copy:
+            # Ещё одна копия тарифа: новая подписка, а не продление имеющейся.
+            target = None
         await _show_quote(
             callback,
             db_user,
@@ -143,6 +150,7 @@ async def purchase_cispay_from_tariff(callback, db_user, db, state):
             period_days=days,
             device_limit=device,
             subscription_id=target,
+            **({'as_copy': True} if as_copy else {}),
         )
     except (ValueError, KeyError, TypeError) as error:
         await db.rollback()

@@ -1163,12 +1163,14 @@ async def purchase_tariff_with_cashera_recurring(
     quote_id=None,
     checkout_id=None,
     channel: str = 'cabinet',
+    as_copy: bool = False,
 ) -> dict[str, Any]:
     """Покупка тарифа оплатой через автопродление Cashera.
 
     Зеркало Platega/Lava: нет подписки на тариф → EXPIRED-заготовка без доступа,
     первое списание её продлит и создаст panel-юзера. Отказы (ValueError): триал,
-    DISABLED/PENDING, в single-режиме — подписка другого тарифа.
+    DISABLED/PENDING, в single-режиме — подписка другого тарифа. ``as_copy`` —
+    ещё одна копия уже живого тарифа: своя заготовка с ключом копии.
     """
     if not settings.is_cashera_recurrent_enabled():
         raise RuntimeError('Cashera recurrent is disabled')
@@ -1186,6 +1188,7 @@ async def purchase_tariff_with_cashera_recurring(
             checkout_id=checkout_id,
             subscription_id=subscription_id,
             channel=channel,
+            as_copy=as_copy,
         )
         result = await enable_cashera_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
         return {**result, 'subscription_id': subscription.id}
@@ -1196,7 +1199,13 @@ async def purchase_tariff_with_cashera_recurring(
         get_subscription_by_user_id,
     )
 
-    if subscription_id is not None:
+    if as_copy:
+        if subscription_id is not None or not settings.is_multi_tariff_enabled():
+            raise ValueError('checkout_conflict')
+        from app.services.recurrent_purchase_selection import resolve_new_copy_placeholder
+
+        subscription = await resolve_new_copy_placeholder(db, user_id=user.id, tariff=tariff)
+    elif subscription_id is not None:
         from app.services.recurrent_purchase_selection import resolve_recurrent_purchase_selection
 
         subscription = await resolve_recurrent_purchase_selection(

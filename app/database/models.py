@@ -2800,13 +2800,23 @@ class Subscription(Base):
         Index('ix_subscriptions_user_tariff_status', 'user_id', 'tariff_id', 'status'),
         Index('ix_subscriptions_grace_expiry_scan', 'status', 'is_trial', 'end_date'),
         Index('ix_subscriptions_grace_candidate', 'grace_candidate_at', 'grace_candidate_reason'),
+        # Одна живая обычная подписка на тариф. Копии тарифа (``copy_key`` задан)
+        # индекс не держит: каждая копия — отдельная явная покупка со своим ключом.
+        # Для обычных строк индекс остаётся сторожем гонок: двойной клик или
+        # повторный вебхук не заведут вторую подписку молча.
         Index(
             'uq_subscriptions_user_tariff_active',
             'user_id',
             'tariff_id',
             unique=True,
-            postgresql_where=text("tariff_id IS NOT NULL AND status IN ('active', 'trial', 'limited')"),
+            postgresql_where=text(
+                "tariff_id IS NOT NULL AND copy_key IS NULL AND status IN ('active', 'trial', 'limited')"
+            ),
+            sqlite_where=text(
+                "tariff_id IS NOT NULL AND copy_key IS NULL AND status IN ('active', 'trial', 'limited')"
+            ),
         ),
+        Index('uq_subscriptions_copy_key', 'copy_key', unique=True),
         # Панельная идентичность подписки. Уникальность частичная: непривязанных
         # подписок (remnawave_id IS NULL) может быть сколько угодно, а вот две
         # подписки на одного панельного пользователя — всегда ошибка. Код это и
@@ -2901,6 +2911,11 @@ class Subscription(Base):
     remnawave_short_id = Column(
         String(16), nullable=False, unique=True, server_default=''
     )  # Permanent short ID for username suffix
+    # Ключ покупки копии тарифа: задан у подписки, купленной (или переведённой на
+    # тариф) рядом с уже живой подпиской того же тарифа. Уникален, поэтому
+    # повторная обработка той же покупки упирается в базу так же, как обычная
+    # покупка упирается в ``uq_subscriptions_user_tariff_active``.
+    copy_key = Column(String(64), nullable=True)
 
     # Тариф (для режима продаж "Тарифы")
     tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='RESTRICT'), nullable=True, index=True)

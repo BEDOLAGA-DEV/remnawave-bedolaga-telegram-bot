@@ -237,6 +237,11 @@ class TariffPurchasePreviewRequest(BaseModel):
     traffic_gb: int | None = Field(None, ge=0, le=100_000, strict=True)
     subscription_id: int | None = Field(None, ge=1, strict=True)
     selected_device_limit: int | None = Field(None, ge=1, le=2_147_483_647, strict=True)
+    as_copy: bool = Field(
+        False,
+        strict=True,
+        description='Multi-tariff: buy one more copy of a tariff the user already has live (new subscription).',
+    )
 
 
 class TariffPurchaseRequest(BaseModel):
@@ -259,6 +264,11 @@ class TariffPurchaseRequest(BaseModel):
         None,
         ge=1,
         description='Existing subscription_id when renewing (multi-tariff). Resolves race with concurrent panel webhooks.',
+    )
+    as_copy: bool = Field(
+        False,
+        strict=True,
+        description='Multi-tariff: buy one more copy of a tariff the user already has live (new subscription).',
     )
     # See PurchasePreviewRequest.yandex_cid (#558449).
     yandex_cid: str | None = Field(

@@ -51,8 +51,15 @@ async def claim_gift_for_user(
     claim_input: str,
     *,
     allow_legacy_short: bool = False,
+    target_subscription_id: int | None = None,
+    as_copy: bool = False,
+    ask_tariff_choice: bool = True,
 ) -> GuestPurchase:
     """Claim and activate a gift subscription for an authenticated user.
+
+    Multi-tariff, the gift's tariff is already live for the claimant: without
+    ``target_subscription_id`` / ``as_copy`` the gift stays bound and pending and
+    ``TariffChoiceRequiredError`` asks the claimant first.
 
     Args:
         db: AsyncSession database session.
@@ -128,6 +135,9 @@ async def claim_gift_for_user(
         purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
 
     await db.flush()
+    await _ask_tariff_choice_if_needed(
+        db, purchase, claimant_user_id, target_subscription_id, as_copy, ask=ask_tariff_choice
+    )
 
     logger.info(
         'Claiming gift for user',
@@ -135,18 +145,51 @@ async def claim_gift_for_user(
         claimant_user_id=claimant_user_id,
     )
 
-    activated_purchase = await guest_purchase_service.activate_purchase(db, purchase.token, skip_notification=True)
+    activated_purchase = await guest_purchase_service.activate_purchase(
+        db,
+        purchase.token,
+        skip_notification=True,
+        target_subscription_id=target_subscription_id,
+        as_copy=as_copy,
+    )
     if isinstance(activated_purchase, GuestPurchase):
         return activated_purchase
     return purchase
+
+
+async def _ask_tariff_choice_if_needed(
+    db, purchase, claimant_user_id, target_subscription_id, as_copy, *, ask: bool = True
+) -> None:
+    """Тариф подарка у получателя уже жив — сначала спросить, не активируя.
+
+    Привязка к получателю и статус фиксируются до вопроса: ответ приходит уже по
+    id покупки (``claim_bound_gift_for_user``), без повторного ввода кода.
+    """
+    try:
+        await guest_purchase_service.require_tariff_choice(
+            db,
+            purchase=purchase,
+            user_id=claimant_user_id,
+            target_subscription_id=target_subscription_id,
+            as_copy=as_copy,
+            ask=ask,
+        )
+    except guest_purchase_service.TariffChoiceRequiredError:
+        await db.commit()
+        raise
 
 
 async def claim_bound_gift_for_user(
     db: AsyncSession,
     claimant_user_id: int,
     purchase_id: int,
+    *,
+    target_subscription_id: int | None = None,
+    as_copy: bool = False,
 ) -> GuestPurchase:
     """Activate an already bound gift subscription by purchase ID (directed callback).
+
+    The tariff choice works as in ``claim_gift_for_user``.
 
     Args:
         db: AsyncSession database session.
@@ -206,6 +249,7 @@ async def claim_bound_gift_for_user(
         purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
 
     await db.flush()
+    await _ask_tariff_choice_if_needed(db, purchase, claimant_user_id, target_subscription_id, as_copy)
 
     logger.info(
         'Claiming directed bound gift for user',
@@ -213,7 +257,13 @@ async def claim_bound_gift_for_user(
         claimant_user_id=claimant_user_id,
     )
 
-    activated_purchase = await guest_purchase_service.activate_purchase(db, purchase.token, skip_notification=True)
+    activated_purchase = await guest_purchase_service.activate_purchase(
+        db,
+        purchase.token,
+        skip_notification=True,
+        target_subscription_id=target_subscription_id,
+        as_copy=as_copy,
+    )
     if isinstance(activated_purchase, GuestPurchase):
         return activated_purchase
     return purchase

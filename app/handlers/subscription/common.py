@@ -27,6 +27,16 @@ logger = structlog.get_logger(__name__)
 
 TRAFFIC_PRICES = get_traffic_prices()
 
+# FSM-признак «покупаю ещё одну копию тарифа, который у меня уже есть». Ставит его
+# только кнопка «Купить ещё одну» на экране выбора; выбор тарифа из списка и вход
+# в витрину его сбрасывают, поэтому вопрос задаётся на каждой новой покупке.
+TARIFF_COPY_STATE_KEY = 'tariff_copy_for'
+
+
+def is_tariff_copy_data(data: dict | None, tariff_id: int) -> bool:
+    """Идёт ли по этому состоянию покупка ещё одной копии тарифа."""
+    return settings.is_multi_tariff_enabled() and bool(data) and data.get(TARIFF_COPY_STATE_KEY) == tariff_id
+
 
 async def resolve_subscription_from_context(
     callback,

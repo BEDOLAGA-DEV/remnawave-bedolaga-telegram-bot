@@ -58,6 +58,7 @@ from app.services.gift_claim_service import (
     GiftClaimSelfActivationError,
     claim_gift_for_user,
 )
+from app.services.guest_purchase_service import TariffChoiceRequiredError
 from app.services.main_menu_button_service import MainMenuButtonService
 from app.services.phantom_service import claim_phantom, merge_phantom_into_user
 from app.services.pinned_message_service import (
@@ -450,6 +451,11 @@ async def _activate_pending_gift_after_registration(
                 claim_input=gift_token,
                 allow_legacy_short=False,
             )
+        except TariffChoiceRequiredError as required:
+            from app.handlers.gift_activation import gift_tariff_choice_markup, gift_tariff_choice_text
+
+            await answer_func(gift_tariff_choice_text(texts), reply_markup=gift_tariff_choice_markup(texts, required))
+            return
         except GiftClaimSelfActivationError:
             await answer_func(
                 texts.t(

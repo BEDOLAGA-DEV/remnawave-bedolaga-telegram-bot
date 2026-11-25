@@ -44,6 +44,7 @@ class PayHotQuoteRequest(BaseModel):
     device_limit: int | None = Field(default=None, ge=0, le=2_147_483_647, strict=True)
     subscription_id: int | None = Field(default=None, gt=0, strict=True)
     payment_method: Literal['card', 'sbp']
+    as_copy: bool = Field(default=False, strict=True)
 
 
 class PayHotPurchaseRequest(BaseModel):
