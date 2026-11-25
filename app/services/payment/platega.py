@@ -277,10 +277,10 @@ class PlategaPaymentMixin:
             description=getattr(tariff, 'name', None) or 'Подписка',
         )
 
-        platega_id = (response or {}).get('transactionId')
+        platega_id = (response or {}).get('transactionId') or (response or {}).get('id')
         if not platega_id:
             raise RuntimeError('Platega не вернула transactionId при создании подписки')
-        redirect_url = (response or {}).get('redirect')
+        redirect_url = PlategaService.parse_redirect_url(response)
 
         try:
             record = await sub_crud.create_platega_subscription(
@@ -855,9 +855,13 @@ class PlategaPaymentMixin:
                 locked = await platega_crud.get_platega_payment_by_id_for_update(db, payment.id)
                 if not locked:
                     logger.error('Platega status check: не удалось заблокировать платёж', payment_id=payment.id)
-                elif locked.is_paid:
+                elif locked.is_paid or locked.transaction_id:
                     # Another concurrent handler already processed — skip
                     logger.info('Platega платеж уже оплачен после блокировки', correlation_id=locked.correlation_id)
+                    if not locked.is_paid:
+                        locked.is_paid = True
+                        locked.updated_at = datetime.now(UTC)
+                        await db.commit()
                     payment = locked
                 else:
                     payment = locked

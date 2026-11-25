@@ -2949,6 +2949,8 @@ class MonitoringService:
             service = PlategaService()
             if not service.is_configured:
                 return
+            # Фоновая сверка не утраивает таймауты: неудавшийся вызов повторит следующий тик.
+            service._max_retries = 1
 
             checked_at: dict[int, float] = getattr(self, '_platega_sub_checked_at', None)
             if checked_at is None:
@@ -2968,6 +2970,10 @@ class MonitoringService:
             consecutive_timeouts = 0
 
             records = await sub_crud.list_platega_subscriptions_by_statuses(db, ['PENDING', 'ACTIVE', 'PAST_DUE'])
+            live_active_ids = {rec.id for rec in records}
+            for stale_id in list(checked_at):
+                if stale_id not in live_active_ids:
+                    checked_at.pop(stale_id, None)
             now_mono = time.monotonic()
             due_ids: list[int] = []
             for rec in sorted(records, key=lambda r: checked_at.get(r.id, 0.0)):
@@ -2990,15 +2996,16 @@ class MonitoringService:
                     record = await sub_crud.get_platega_subscription_by_id(db, record_id)
                     if record is None:
                         continue
+                    platega_sub_id = record.platega_subscription_id
                     http_status: int | None = None
-                    if record.platega_subscription_id:
+                    if platega_sub_id:
                         if active_http_done >= max_active_http_per_tick:
                             continue
                         if http_calls > 0:
                             await asyncio.sleep(inter_request_delay_sec)
                         http_calls += 1
                         active_http_done += 1
-                        remote, http_status = await service.get_subscription_status(record.platega_subscription_id)
+                        remote, http_status = await service.get_subscription_status(platega_sub_id)
                         if http_status is None:
                             consecutive_timeouts += 1
                         else:
@@ -3025,6 +3032,9 @@ class MonitoringService:
                     if record is None:
                         await db.rollback()
                         continue
+                    # Снимаем скаляр до commit/replay: синк панели внутри replay при ошибке
+                    # делает db.rollback(), экспайря атрибуты record (MissingGreenlet).
+                    platega_sub_id = record.platega_subscription_id
                     new_status = platega_reconcile_decision(
                         record.status, remote_status, age_minutes, remote_missing=remote_missing
                     )
@@ -3033,8 +3043,8 @@ class MonitoringService:
                         await sub_crud.update_platega_subscription(db, record, status=new_status)
                         logger.info(
                             'Platega-подписка реконсилирована',
-                            local_id=record.id,
-                            platega_subscription_id=record.platega_subscription_id,
+                            local_id=record_id,
+                            platega_subscription_id=platega_sub_id,
                             old_status=previous_status,
                             new_status=new_status,
                             remote_status=remote_status,
@@ -3051,7 +3061,7 @@ class MonitoringService:
                         from app.services.payment.platega import replay_missed_platega_charges
 
                         await replay_missed_platega_charges(db, record, remote)
-                    if record.platega_subscription_id and http_status is not None:
+                    if platega_sub_id and http_status is not None:
                         checked_at[record_id] = time.monotonic()
                 except Exception as record_error:
                     await db.rollback()
@@ -3067,6 +3077,10 @@ class MonitoringService:
             cancelled_records = await sub_crud.list_recently_cancelled_platega_subscriptions(
                 db, datetime.now(UTC) - timedelta(days=30)
             )
+            live_cancelled_ids = {rec.id for rec in cancelled_records}
+            for stale_id in list(cancelled_checked_at):
+                if stale_id not in live_cancelled_ids:
+                    cancelled_checked_at.pop(stale_id, None)
             now_mono = time.monotonic()
             cancelled_ids = [
                 rec.id
@@ -3102,6 +3116,9 @@ class MonitoringService:
                     )
                     cancel_ok = True
                     if remote_status not in (None, 'cancelled', 'canceled', 'failed', 'expired'):
+                        if http_calls > 0:
+                            await asyncio.sleep(inter_request_delay_sec)
+                        http_calls += 1
                         cancel_result = await service.cancel_subscription(platega_id)
                         cancel_ok = cancel_result is not None
                         logger.warning(

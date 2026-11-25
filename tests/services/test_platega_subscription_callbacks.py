@@ -127,6 +127,38 @@ async def test_create_sbp_subscription_persists_and_disables_autopay(monkeypatch
         assert stored.amount_kopeks == 19900
 
 
+async def test_create_sbp_subscription_parses_v2_url_field(monkeypatch):
+    """В Platega v2 API ответ /v2/transaction/process отдаёт ссылку в поле url вместо redirect."""
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    subscription = SimpleNamespace(id=2, autopay_enabled=True, autopay_period_days=30)
+    tariff = SimpleNamespace(
+        id=5,
+        is_daily=False,
+        name='Стандарт',
+        get_available_periods=lambda: [30],
+        get_shortest_period=lambda: 30,
+        get_purchasable_price_for_period=lambda d: 19900,
+    )
+
+    class Svc(PlategaPaymentMixin):
+        def __init__(self):
+            self.platega_service = SimpleNamespace(
+                create_subscription=AsyncMock(
+                    return_value={'transactionId': 'tx-v2-9', 'url': 'https://payplatega.com/v2/9', 'status': 'PENDING'}
+                )
+            )
+
+    async with _memory_session(monkeypatch) as db:
+        result = await Svc().create_platega_sbp_subscription(db, user_id=778, subscription=subscription, tariff=tariff)
+
+        assert result['platega_subscription_id'] == 'tx-v2-9'
+        assert result['redirect_url'] == 'https://payplatega.com/v2/9'
+        stored = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
+        assert stored is not None
+        assert stored.redirect_url == 'https://payplatega.com/v2/9'
+
+
 async def test_create_sbp_subscription_is_idempotent_on_repeat_call(monkeypatch):
     """Повторный вызов (двойной тап / ретрай клиента) не должен плодить вторую
     Platega-подписку и не должен повторно звать Platega API — иначе пользователя
