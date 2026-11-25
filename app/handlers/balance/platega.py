@@ -512,7 +512,7 @@ async def check_platega_payment_status(
     status = status_info.get('status')
     is_paid = status_info.get('is_paid')
 
-    if is_paid:
+    if is_paid and str(status).upper() not in {'DISPUTED', 'CHARGEBACKED', 'PARTIALLY_REFUNDED'}:
         await callback.answer(texts.t('PLATEGA_PAYMENT_ALREADY_CONFIRMED', '✅ Платёж уже зачислен'), show_alert=True)
     else:
         await callback.answer(

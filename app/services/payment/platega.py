@@ -767,16 +767,18 @@ class PlategaPaymentMixin:
             return False
         payment = locked
 
-        status_raw = str(payload.get('status') or '').upper()
+        status_raw = str(payload.get('status') or '').strip().upper()
         if not status_raw:
             logger.warning('Platega webhook без статуса для платежа', payment_id=payment.id)
             return False
 
         if status_raw in self._SUCCESS_STATUSES:
-            if payment.is_paid:
+            if payment.is_paid or payment.transaction_id:
                 logger.info('Platega платеж уже помечен как оплачен', correlation_id=payment.correlation_id)
                 # Update callback payload without releasing the lock prematurely
                 payment.callback_payload = payload
+                payment.status = status_raw
+                payment.is_paid = True
                 if transaction_id and not payment.platega_transaction_id:
                     payment.platega_transaction_id = transaction_id
                 payment.updated_at = datetime.now(UTC)
@@ -804,7 +806,8 @@ class PlategaPaymentMixin:
                 status=status_raw,
                 callback_payload=payload,
                 platega_transaction_id=transaction_id or None,
-                is_paid=False,
+                # Поздний неуспешный/спорный коллбек не должен затирать факт зачисления средств.
+                is_paid=bool(payment.is_paid or payment.transaction_id),
             )
             logger.info('Platega платеж перешёл в статус', correlation_id=payment.correlation_id, status_raw=status_raw)
             return True
