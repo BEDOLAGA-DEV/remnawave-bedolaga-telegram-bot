@@ -424,8 +424,8 @@ async def test_apps_answer_has_no_account_links_or_unnecessary_api_calls(flow, m
         await agent_mod.support_agent.generate_answer(db, 4242, 'Какие приложения скачать на Android?')
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'А для iPhone?')
-    assert 'Incy' in result['answer']
-    assert 'Streisand' in result['answer']
+    assert 'Incy' in result['answer'] and 'Happ' in result['answer']
+    assert 'Streisand' not in result['answer']  # only Happ and Incy since 2026-11-27
     assert 'Shadowrocket' not in result['answer']
     assert 'Android' not in result['answer']
     assert 'https://' not in result['answer']

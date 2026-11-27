@@ -13,7 +13,7 @@ _ENUMS = {
     'purchase_channel': {'site', 'telegram', 'unknown'},
     'registration_method': {'email', 'telegram', 'other', 'unknown'},
 }
-_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help', 'service_source', 'renewal_verification', '_tariff_question', '_account_data'}
+_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help', 'service_source', 'renewal_verification', '_tariff_question', '_account_data', '_paid_period_complaint', '_payment_trouble'}
 
 
 def extract_reported_email(text: str) -> str | None:

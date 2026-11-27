@@ -14,6 +14,7 @@ from ai_support_bot.app.core.config import ESCALATION_MARKER
 from ai_support_bot.app.services.dialogue_tools import SUPPORT_TOOLS
 from ai_support_bot.app.services.response_rules import (
     APP_STORE_REGION_HELP,
+    APPLE_ID_ALTERNATIVE,
     CLIENTS,
     SHADOWROCKET_ANSWER,
     apps_answer,
@@ -104,9 +105,10 @@ INCY_DIALOGUE = _history(
 
 def test_shadowrocket_is_never_recommended():
     assert all('Shadowrocket' not in apps for apps in CLIENTS.values())
-    assert CLIENTS['iPhone/iPad'] == ('Incy', 'Happ', 'Streisand')
+    # Since 2026-11-27 only Happ and Incy: the other clients get «Приложение не поддерживается» from the panel.
+    assert CLIENTS['iPhone/iPad'] == ('Incy', 'Happ')
     assert 'Shadowrocket' not in apps_answer('Какие приложения для iPhone?', [])
-    assert 'iPhone/iPad — Incy, Happ, Streisand;' in SUPPORT_POLICY
+    assert 'с подпиской работают только Happ и Incy' in SUPPORT_POLICY
     for line in SUPPORT_POLICY.splitlines():
         for sentence in re.split(r'(?<=[.!?])\s+', line):
             if 'Shadowrocket' in sentence:
@@ -121,7 +123,7 @@ def test_shadowrocket_is_never_recommended():
 def test_shadowrocket_complaint_gets_happ_or_incy_without_the_reason(question):
     answer = apps_answer(question, [])
     assert answer == SHADOWROCKET_ANSWER
-    assert 'Happ' in answer and 'Incy' in answer and 'Streisand' in answer
+    assert 'Happ' in answer and 'Incy' in answer and 'Streisand' not in answer
     assert not re.search(r'hwid|лимит|устройств', answer, re.IGNORECASE)
 
 
@@ -146,7 +148,8 @@ def test_missing_app_still_gets_the_region_instructions_once(question):
     assert apps_answer(question, []) == APP_STORE_REGION_HELP
     second = apps_answer(question, INCY_DIALOGUE)
     assert second != APP_STORE_REGION_HELP
-    assert 'Streisand' in second and 'без смены региона' in second
+    # A separate Apple ID for the App Store instead of Streisand, which gets the «не поддерживается» stub.
+    assert second == APPLE_ID_ALTERNATIVE and 'Streisand' not in second
 
 
 @pytest.mark.parametrize(('question', 'history'), [
@@ -160,7 +163,7 @@ def test_missing_app_still_gets_the_region_instructions_once(question):
 def test_region_refusal_gets_the_other_clients(question, history):
     assert region_change_refused(question, history)
     answer = apps_answer(question, history)
-    assert 'Streisand' in answer
+    assert answer == APPLE_ID_ALTERNATIVE
     assert APP_STORE_REGION_HELP not in answer
 
 
@@ -238,7 +241,7 @@ async def test_second_store_complaint_gets_alternatives_not_a_copy(flow):
     assert '7️⃣' in first['answer']
     second = await _ask(agent_mod, Session, 'Всё равно нет Happ в App Store')
     assert '7️⃣' not in second['answer'] and 'Страна/регион' not in second['answer']
-    assert 'Streisand' in second['answer']
+    assert 'отдельный Apple ID' in second['answer'] and 'Streisand' not in second['answer']
     assert not second['escalate']
     assert not captured['prompts']
 
@@ -263,7 +266,7 @@ async def test_region_tool_called_again_gives_alternatives(flow):
     captured['responses'] = [_tool_reply('app_store_region_help'), {'content': 'Смените регион.'}]
     second = await _ask(agent_mod, Session, 'Всё равно не ставится')
     assert '7️⃣' not in second['answer']
-    assert 'Streisand' in second['answer']
+    assert 'отдельный Apple ID' in second['answer'] and 'Streisand' not in second['answer']
 
 
 # 4. «Белый экран» after a button is a page that did not load, not a VPN failure.

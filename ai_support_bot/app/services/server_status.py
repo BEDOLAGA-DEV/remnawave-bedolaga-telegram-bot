@@ -855,6 +855,24 @@ def _msk(ts: float, fmt: str) -> str:
     return datetime.fromtimestamp(ts, MSK).strftime(fmt)
 
 
+AUTO_SELECT = 'Авто выбор'
+AUTO_SELECT_WHITELIST = 'Авто выбор Белые списки'
+_RUSSIAN_SERVICE_RE = re.compile(r'банк|youtube|ютуб', re.IGNORECASE)
+
+
+def _auto_select_hint(groups) -> str:
+    """The balancers are skipped by the parser, so the model is told about them: they are the first step on a failure."""
+    hint = (
+        f'«{AUTO_SELECT}» — балансировщик, мониторинг его не показывает: он сам выбирает рабочий сервер. '
+        'При любом сбое, медленной работе или вылетах первым советуй его, а не конкретную страну; '
+        f'страну называй, если клиент сам спросил или «{AUTO_SELECT}» не помог.'
+    )
+    russian = [name for _, names in groups for name in names if _RUSSIAN_SERVICE_RE.search(name)]
+    if russian:
+        hint += ' ' + ' и '.join(f'«{name}»' for name in russian[:2]) + ' — только для российских банков, сервисов и YouTube.'
+    return hint
+
+
 def format_status_block(status: ServerStatus | None, now: float | None = None, question: str = '') -> str:
     """Текст для промпта. '' — если данных нет или они старше SERVER_STATUS_MAX_STALE.
 
@@ -886,14 +904,15 @@ def format_status_block(status: ServerStatus | None, now: float | None = None, q
         for label, names in groups:
             lines.append(f'• {label}: {", ".join(names)} — {_group_state(names)}')
         lines.extend(_asked_lines(question, [label for label, _ in groups]))
+        lines.append(_auto_select_hint(groups))
         whitelist = next((names for label, names in groups if label == WHITELIST_GROUP), None)
         if whitelist:
-            servers = ' или '.join(f'«{name}»' for name in list(whitelist)[:2])
+            servers = ' и '.join(f'«{name}»' for name in list(whitelist)[:2])
             lines.append(
                 f'«{WHITELIST_GROUP}» — только для заглушек мобильного интернета, когда оператор открывает '
-                'лишь сайты из белого списка. Если VPN не работает только на мобильном интернете (на Wi‑Fi '
-                'работает или клиент пишет про мобильную сеть, оператора, LTE), предложи переключиться на сервер '
-                f'{servers} и обновить подписку в приложении; не помогло — передай команде. '
+                'лишь сайты из белого списка. Если VPN не работает только на мобильном интернете, предложи '
+                f'«{AUTO_SELECT_WHITELIST}» (сам выбирает из серверов белых списков) и обновить подписку в приложении; '
+                f'{servers} — только если клиент спросил о них или это не помогло; дальше — передай команде. '
                 'При обычных сбоях, медленной работе и на Wi‑Fi их не советуй. '
                 'Пропускает ли их оператор, мониторинг не видит: не пиши, что белые списки «работают», '
                 'пиши, что серверы включены.'
@@ -905,6 +924,7 @@ def format_status_block(status: ServerStatus | None, now: float | None = None, q
     else:
         when = _msk(nodes.fetched_at, '%d.%m %H:%M')
         lines.append(f'Состояние узлов SligVPN по панели на {when} МСК (список стран недоступен).')
+        lines.append(_auto_select_hint([]))
 
     if node_line:
         lines.append(node_line)

@@ -15,17 +15,103 @@ from ai_support_bot.app.services.service_identity import renewal_payment_request
 
 NOTICE = 'Передаю обращение команде для проверки, подождите, пожалуйста.'
 OUTAGE_STEP = (
-    'Пока ждёте: обновите подписку в приложении и переподключитесь. '
-    'Если VPN не работает только на мобильном интернете, выберите сервер «Белые списки».'
+    'Пока ждёте: выберите в приложении локацию «Авто выбор», обновите подписку и переподключитесь. '
+    'Если VPN не работает только на мобильном интернете, выберите «Авто выбор Белые списки».'
 )
 SUPPORT_SCOPE_ANSWER = 'Я помогаю с SligVPN: подключением, подписками, оплатой и настройкой VPN-клиентов. Напишите, какой вопрос по сервису нужно решить.'
-# Shadowrocket is left out on purpose: it does not send the HWID the device limit relies on (not told to customers).
+# Only Happ and Incy send the HWID header the panel checks: Shadowrocket, Streisand, V2RayNG, v2rayN, V2Box get the
+# «Приложение не поддерживается» stub instead of servers (the reason is not told to customers).
 CLIENTS = {
-    'Android': ('Incy', 'Happ', 'V2RayNG'),
-    'iPhone/iPad': ('Incy', 'Happ', 'Streisand'),
-    'Windows': ('Incy', 'Happ', 'v2rayN'),
-    'macOS': ('Incy', 'Happ', 'V2Box'),
+    'Android': ('Incy', 'Happ'),
+    'iPhone/iPad': ('Incy', 'Happ'),
+    'Windows': ('Incy', 'Happ'),
+    'macOS': ('Incy', 'Happ'),
+    'Android TV': ('Incy', 'Happ'),
 }
+# Instead of another client when the App Store region cannot or should not change.
+APPLE_ID_ALTERNATIVE = (
+    'Можно не менять регион основного Apple ID: создайте отдельный Apple ID другой страны (например, Казахстана) '
+    'и войдите им только в App Store — Настройки → [ваше имя] → Медиаматериалы и покупки → Выйти, затем войти '
+    'новым Apple ID. iCloud, фото и контакты останутся на основном аккаунте. Установите Happ или Incy и при '
+    'желании вернитесь в основной Apple ID — приложения останутся.'
+)
+
+# «Работает только на автовыборе»: the balancer is the answer, not a reason to pick a country by hand.
+_AUTO = r'(?:авто\s*-?\s*выбор|автовыбор)\w*'
+AUTO_SELECT_ANSWER = (
+    'Пользуйтесь «Авто выбором» — он сам переключается на рабочий сервер, поэтому отдельные страны в списке могут '
+    'временно не отвечать. Если нужна конкретная страна — напишите какая, проверю.'
+)
+_AUTO_ONLY = re.compile(
+    r'(?<!не\s)работа\w*\s+(?:[\w-]+\s+){0,2}?(?:только|лишь)\s+(?:на\s+|через\s+|с\s+)?«?' + _AUTO
+    + r'|(?:только|лишь)\s+(?:на\s+|через\s+|с\s+)?«?' + _AUTO + r'»?\s+(?:[\w-]+\s+){0,2}?(?<!не\s)работа'
+    + r'|кроме\s+«?' + _AUTO + r'[^.!?]{0,40}(?:не\s+работа|ничего|не\s+подключ)'
+    + r'|(?:ничего|ни\s+один\w*|ни\s+одн\w+)\s+(?:[\w-]+\s+){0,3}?кроме\s+«?' + _AUTO
+    + r'|«?' + _AUTO + r'»?\s+работа\w*[^.!?]{0,20}?(?:\bа|\bно)\s+(?:на\s+)?(?:други|остальн|обычн|стран|сервер|локаци)\w*'
+)
+# «Раньше работал только автовыбор, теперь и он не работает»: the balancer fails too.
+# «Все, кроме автовыбора, не работают» is not that: «кроме» comes first.
+_AUTO_FAILS = re.compile(
+    r'(?:\bи|даже|тоже)\s+(?:на\s+)?(?:он|она|оно|«?' + _AUTO + r'»?)\s+(?:тоже\s+|уже\s+|теперь\s+)?не\s+(?:работа|подключ|грузит)'
+    r'|(?<!кроме\s)(?<!кроме\s«)' + _AUTO + r'»?,?\s+(?:тоже\s+|уже\s+|теперь\s+|больше\s+)?не\s+(?:работа|подключ|грузит)'
+)
+
+
+def auto_select_only(question: str, history: list = ()) -> bool:
+    """«Впн работает только на автовыборе»: the answer is «keep using it», once per dialogue."""
+    text = (question or '').casefold()
+    if not _AUTO_ONLY.search(text) or _AUTO_FAILS.search(text):
+        return False
+    return not any(getattr(item, 'role', '') == 'assistant' and AUTO_SELECT_ANSWER in (getattr(item, 'content', '') or '')
+                   for item in history)
+
+
+# «Почему не могу оплатить?»: the payment itself fails; nothing was charged, so no receipt is needed.
+PAYMENT_TROUBLE_ANSWER = (
+    'Если оплата не проходит или страница оплаты не открывается:\n'
+    '• Откройте оплату в обычном браузере (Safari или Chrome), а не во встроенном окне Telegram.\n'
+    '• Попробуйте другой способ оплаты: СБП или карту. В боте https://t.me/SligVPN_bot можно ещё пополнить баланс '
+    'через Telegram Stars и оплатить подписку с баланса.\n'
+    '• Если появляется ошибка, пришлите её скриншот — разберёмся.'
+)
+_PAYMENT_TROUBLE = re.compile(
+    r'не\s+(?:могу|можем|может|получается|получилось|удаётся|удается|удалось|выходит|вышло|смог\w*)\s+(?:[\w-]+\s+){0,2}?'
+    r'(?:оплатить|заплатить|(?:произвести|провести|сделать)\s+оплату|пройти\s+оплату)'
+    r'|(?:оплата|плат[её]ж)\s+(?:[\w-]+\s+)?не\s+(?:проходит|проходят|прошла|прош[её]л|выполня\w*|провод\w*)'
+    r'|не\s+(?:проходит|проходят|прошла|прош[её]л)\s+(?:[\w-]+\s+)?(?:оплата|плат[её]ж)'
+    r'|ошибк\w*\s+(?:при\s+|во\s+время\s+)?(?:оплат|плат[её]ж)|(?:оплат\w*|плат[её]ж\w*)\s+(?:[\w-]+\s+)?(?:выда[её]т|пишет|показывает)\s+ошибк'
+    r'|не\s+открыва\w*\s+(?:страниц\w*\s+)?оплат|страниц\w*\s+оплат\w*\s+не\s+(?:открыва|загружа|грузит)'
+)
+# A charge, a completed payment or a promo code is another case: payment check, dispute or the team.
+_PAYMENT_DONE = re.compile(
+    r'спис\w*|снял\w*|сняли|снят\w*|ушл[иао]|оплатил\w*|заплатил\w*|проплатил\w*|перев[её]л\w*|чек\b|выписк|квитанц'
+    r'|возврат|верн\w*|дважды|промокод|промо\b|скидк'
+)
+
+
+def payment_trouble(question: str) -> bool:
+    """«Не могу оплатить», «оплата не проходит», «ошибка при оплате» in a short message without a charge."""
+    text = (question or '').casefold()
+    return len(text) <= 200 and bool(_PAYMENT_TROUBLE.search(text)) and not _PAYMENT_DONE.search(text)
+
+
+# «Ваш ещё месяц проплачен», «подписка оплачена до декабря» next to «не работает»: the paid period is context,
+# the complaint is technical. A fresh payment, a charge or a term that did not grow stays a payment question.
+_PAID_PERIOD = re.compile(r'(?<![а-яё])(?:о|про)плачен\w*')
+_PAYMENT_FAILED = re.compile(
+    r'оплатил\w*|заплатил\w*|проплатил\w*|спис\w*|снял\w*|сняли|деньг|перев[её]л\w*|чек\b|выписк'
+    r'|не\s+(?:продлил|продлен|продлён|пришл|пришел|пришёл|зачисл|поступ|отобража|появил|активир|добавил|обновил|измен)\w*'
+    r'|не\s+прош(?:ла|[её]л)|ист[её]к\w*|закончил\w*|\b0\s*дн'
+)
+_TECH_FAILURE_ANY = re.compile(
+    r'не\s+(?:работа|подключ|грузит|загружа|открыва|заход|коннект|соедин)\w*|(?:плохо|медленно)\s+работа\w*'
+    r'|вылета\w*|тормоз\w*|отвалива\w*'
+)
+
+
+def paid_period_complaint(question: str) -> bool:
+    text = (question or '').casefold()
+    return bool(_PAID_PERIOD.search(text) and _TECH_FAILURE_ANY.search(text) and not _PAYMENT_FAILED.search(text))
 
 
 APP_STORE_REGION_HELP = (
@@ -165,17 +251,22 @@ def conversation_topic(question: str) -> str | None:
         return 'vpn'
     if re.search(r'лимит.*устройств|сколько.*устройств|удал\w*.*устройств', text) and re.search(r'\?|как|сколько|нужно|удал|ошибк', text):
         return 'devices'
-    if re.search(r'цен[ауы]|стоимост|тариф|стоит|поч[её]м', text):
+    # «Почём», not «почему-то»: a bare «поч[её]м» once turned «всеравно не работает почему-то» into a price question.
+    if re.search(r'цен[ауы]|стоимост|тариф|стоит|поч[её]м\b', text):
         return 'subs_buy_subscription'
     if re.search(r'баланс|аккаунт|email|почт|подписк', text) and re.search(r'покажи|проверь|какой|какая|какие|сколько|мой|моя|моего|моей', text):
         return 'account'
     return None
 
 
+# «Всё равно / всеравно / всё ещё / до сих пор не работает»: the same problem goes on, never a new topic.
+STILL_FAILING = r'вс[её]\s*равно|вс[её]\s+ещ[её]|до\s+сих\s+пор|по-?прежнему'
+
+
 def starts_new_topic(question: str, history: list, state: dict) -> bool:
     if state.get('renewal_verification') and renewal_payment_request(question, history, pending=True):
         return False
-    if is_context_followup(question) or is_channel_followup(question) or re.search(r'\b(?:это|этим|этот|эта|этой|его|её|ее|там|тогда)\b|вс[её] равно', question, re.IGNORECASE):
+    if is_context_followup(question) or is_channel_followup(question) or re.search(r'\b(?:это|этим|этот|эта|этой|его|её|ее|там|тогда)\b|' + STILL_FAILING, question, re.IGNORECASE):
         return False
     current = conversation_topic(question)
     if current is None and state.get('issue') in {'payment_missing', 'payment_activation', 'wheel_reward'}:
@@ -185,6 +276,9 @@ def starts_new_topic(question: str, history: list, state: dict) -> bool:
     previous = 'payment' if state.get('issue') == 'payment_missing' else next(
         (topic for item in reversed(history) if item.role == 'user' and (topic := conversation_topic(item.content or ''))), None,
     )
+    # «Почему не работает?», «опять не грузит» after the VPN steps: the same failure, not an unrelated question.
+    if current is None and previous == 'vpn' and (_TECH_FAILURE.search(question.casefold()) or _TRIED.search(question.casefold())):
+        return False
     if current and previous:
         return current != previous
     return bool(history) and starts_unrelated_question(question)
@@ -341,7 +435,7 @@ def money_dispute_topic(question: str) -> bool:
 _TRIED = re.compile(
     r'уже\s+(?:вс[её]\s+)?(?:пробовал\w*|попробовал\w*|перепробовал\w*|делал\w*|сделал\w*)|перепробовал\w*'
     r'|пробовал\w*\s+(?:через\s+|в\s+|на\s+)?(?:разн\w*|все|вс[её]|други\w*|несколько)'
-    r'|не\s+помог\w*|не\s+помогает|ничего\s+не\s+(?:помог\w*|измен\w*|поменял\w*|меня\w*)|вс[её]\s+равно\s+не\b'
+    r'|не\s+помог\w*|не\s+помогает|ничего\s+не\s+(?:помог\w*|измен\w*|поменял\w*|меня\w*)|(?:' + STILL_FAILING + r')\s+не\b'
 )
 _LONG_OUTAGE = re.compile(
     r'(?<!на\s)(?<!в\s)(?:уже\s+|больше\s+|более\s+|около\s+|почти\s+|целую\s+|всю\s+)?недел[юиья]\b'
@@ -358,7 +452,7 @@ _TECH_FAILURE = re.compile(
     r'|(?:плохо|ужасно)\s+работа\w*|нет\s+интернет\w*|\bn[\\/]a\b|н/д'
 )
 _BASIC_STEPS = (
-    r'(?:смен|друг|выбер|выбра|переключ)\w*[^.\n]{0,30}сервер|сервер\w*[^.\n]{0,20}(?:смен|друг)',
+    r'(?:смен|друг|выбер|выбра|переключ)\w*[^.\n]{0,30}(?:сервер|локаци)|сервер\w*[^.\n]{0,20}(?:смен|друг)|' + _AUTO,
     r'обнов\w*[^.\n]{0,30}(?:подписк|список|сервер)',
     r'перезапуст|перезагруз',
     r'wi.?fi|мобильн\w*\s+(?:сет|интернет)|сотов',
@@ -444,9 +538,9 @@ def mandatory_handoff(question: str, history: list) -> str | None:
         return 'payment_dispute'
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
     technical = bool(re.search(r'vpn|впн|сервер|приложени|incy|happ|подключени', text + ' ' + previous))
-    failed = bool(re.search(r'не помог\w*|вс[её] равно не работает|не заработал', text))
+    failed = bool(re.search(r'не помог\w*|(?:' + STILL_FAILING + r')\s+не работает|не заработал', text))
     actions = sum(bool(re.search(pattern, text)) for pattern in (
-        r'перезапуст|перезагруз', r'сервер', r'wi.?fi|мобильн', r'обновил', r'заново|повторн\w* импорт',
+        r'перезапуст|перезагруз', r'сервер|локаци|' + _AUTO, r'wi.?fi|мобильн', r'обновил', r'заново|повторн\w* импорт',
     ))
     if technical and failed and (actions >= 2 or re.search(r'вс[её]\s+(?:это\s+)?(?:уже\s+)?(?:пробовал|сделал)', text)):
         return 'diagnostics_failed'
@@ -495,12 +589,12 @@ HAPP_RECOVERY = (
 
 def happ_recovery_step(question: str, history: list, state: dict) -> tuple[str | None, str | None]:
     progress = dict(state.get('diagnostics') or {})
-    failed = bool(re.search(r'не помог\w*|не работает|не заработал|та же ошибк|вс[её] равно|не уда[её]тся', question, re.IGNORECASE))
+    failed = bool(re.search(r'не помог\w*|не работает|не заработал|та же ошибк|не уда[её]тся|' + STILL_FAILING, question, re.IGNORECASE))
     previous = next((item.content or '' for item in reversed(history) if item.role == 'assistant'), '')
     context = question + ' ' + previous + ' ' + ' '.join(item.content or '' for item in history if item.role == 'user')
     if not progress.get('awaiting_app') and not re.search(r'\b(?:vpn|впн|happ|incy|хапп|хэпп)\b|сервер', context, re.IGNORECASE):
         return None, None
-    basic_advice = bool(re.search(r'обнов\w*|перезапуст\w*|перезагруз\w*|друг\w* сервер|смен\w* сервер', previous, re.IGNORECASE))
+    basic_advice = bool(re.search(r'обнов\w*|перезапуст\w*|перезагруз\w*|друг\w* сервер|смен\w* сервер|' + _AUTO, previous, re.IGNORECASE))
     if not failed and not progress.get('awaiting_app'):
         return None, None
     client = None
@@ -539,7 +633,7 @@ def subscription_restricted(text: str) -> bool:
 def repeated_diagnostics(answer: str, question: str, history: list, has_image: bool = False) -> bool:
     if re.search(r'\bповтори(?:те)?\b|ещ[её] раз.*(?:инструкц|шаг)', question, re.IGNORECASE):
         return False
-    if not has_image and not re.search(r'не работает|не помог\w*|не заработал|та же ошибк|вс[её] равно', question, re.IGNORECASE):
+    if not has_image and not re.search(r'не работает|не помог\w*|не заработал|та же ошибк|' + STILL_FAILING, question, re.IGNORECASE):
         return False
     previous = next((item.content or '' for item in reversed(history) if item.role == 'assistant'), '')
     if not previous or not re.search(r'vpn|впн|сервер|incy|happ|приложени|подключ', previous + ' ' + question, re.IGNORECASE):
@@ -553,7 +647,7 @@ def repeated_diagnostics(answer: str, question: str, history: list, has_image: b
         return True
     actions = (
         r'перезапуст|перезагруз', r'обнов\w*.*(?:сервер|подписк)|(?:сервер|подписк).*обнов',
-        r'(?:друг\w*|смен\w*|выбер\w*).*сервер', r'wi.?fi|мобильн\w* сет|сотов\w*',
+        r'(?:друг\w*|смен\w*|выбер\w*).*(?:сервер|локаци)|' + _AUTO, r'wi.?fi|мобильн\w* сет|сотов\w*',
         r'импорт|заново добав|повторно добав', r'переустанов',
         r'пинг.*tcp|tcp.*пинг', r'сброс.*настро',
     )
@@ -608,14 +702,28 @@ def handoff_answer(reason: str, question: str) -> str:
 
 _STORE = r'app\s*store|апп?\s*стор|аппстор|эпп\s*стор'
 _APP_NAME = r'happ|incy|хапп|хэпп|инси'
-_PLATFORMS = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов', 'macOS': r'macos|макбук|mac\b'}
+_PLATFORMS = {
+    'Android': r'android(?!\s*tv)|андроид(?!\s*тв)', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов',
+    'macOS': r'macos|макбук|mac\b', 'Android TV': r'android\s*tv|андроид\s*тв|google\s*tv|гугл\s*тв',
+}
 # The approved instructions contain this phrase: its copy in the history means they were already sent.
 _REGION_HELP_MARK = 'сменить регион Apple Account'
-_SHADOWROCKET = re.compile(r'shadow\s*rocket|ш[аэ]д[оа]у?\s*рокет', re.IGNORECASE)
-SHADOWROCKET_ANSWER = (
-    'Shadowrocket с нашей подпиской не работает. Для подключения используйте Happ или Incy. Если на iPhone их не '
-    'получается установить без смены региона Apple ID, подойдёт Streisand. Затем добавьте в приложение ссылку своей подписки.'
+# Clients the panel answers with «Приложение не поддерживается»; V2RayNG, v2rayN and V2Box are left to the model.
+_UNSUPPORTED_CLIENTS = (
+    ('Shadowrocket', re.compile(r'shadow\s*rocket|ш[аэ]д[оа]у?\s*рокет', re.IGNORECASE)),
+    ('Streisand', re.compile(r'streisand|стр[еэ]йз[аэ]нд', re.IGNORECASE)),
 )
+_SHADOWROCKET = _UNSUPPORTED_CLIENTS[0][1]
+# Every unsupported-client answer has this phrase: it is given once per dialogue.
+_UNSUPPORTED_MARK = 'с нашей подпиской не работает. Для подключения используйте Happ или Incy'
+
+
+def unsupported_client_answer(name: str) -> str:
+    return (f'{name} {_UNSUPPORTED_MARK} и добавьте в приложение ссылку своей подписки. '
+            'Если на iPhone они не находятся в App Store, напишите — подскажу, как их установить.')
+
+
+SHADOWROCKET_ANSWER = unsupported_client_answer('Shadowrocket')
 
 
 def region_help_given(history: list) -> bool:
@@ -634,22 +742,29 @@ def region_change_refused(question: str, history: list) -> bool:
 
 
 def store_alternatives_answer(question: str = '') -> str:
-    """Instead of a second copy of the region instructions: the other clients of the platform, iPhone by default."""
+    """Instead of a second copy of the region instructions: a separate Apple ID for the App Store, iPhone by default.
+
+    Only Happ and Incy work with the subscription, so there is no other client to offer.
+    """
     platform = next((name for name, pattern in _PLATFORMS.items() if re.search(pattern, question.casefold())), 'iPhone/iPad')
-    apps = ', '.join(name for name in CLIENTS[platform] if name not in {'Incy', 'Happ'})
     if platform == 'iPhone/iPad':
-        return (f'Если регион Apple ID сменить не получается или не хочется, установите {apps}: его можно скачать '
-                'без смены региона. Затем добавьте в него ссылку своей подписки.')
-    return f'{platform}: можно установить {apps} и добавить в него ссылку своей подписки.'
+        return APPLE_ID_ALTERNATIVE
+    if platform in {'Android', 'Android TV'}:
+        return ('Без магазина приложений Happ можно установить файлом APK: '
+                'https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk. '
+                'Затем добавьте в него ссылку своей подписки.')
+    return (f'{platform}: Happ и Incy устанавливаются без магазина приложений — ссылки на установку есть в инструкции '
+            'вашей подписки («Подключить устройство»).')
 
 
 def apps_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
-    shadowrocket_told = any(item.role == 'assistant' and 'Shadowrocket с нашей подпиской не работает' in (getattr(item, 'content', '') or '')
-                            for item in history)
-    if _SHADOWROCKET.search(text) and re.search(r'не\s|ошибк|поддерж|можно|подойд|подход|работа|подключ|\?', text) and not shadowrocket_told:
-        return SHADOWROCKET_ANSWER
+    client_told = any(item.role == 'assistant' and _UNSUPPORTED_MARK in (getattr(item, 'content', '') or '') for item in history)
+    complaint = re.search(r'не\s|ошибк|поддерж|можно|подойд|подход|работа|подключ|\?', text)
+    unsupported = next((name for name, pattern in _UNSUPPORTED_CLIENTS if pattern.search(text)), None)
+    if unsupported and complaint and not client_told:
+        return unsupported_client_answer(unsupported)
     store_context = bool(re.search(_STORE + r'|iphone|ipad|ios|айфон|айпад', text + ' ' + previous))
     app_word = r'\b(?:' + _APP_NAME + r')\b|приложени\w*|(?:' + _STORE + r')\w*'
     # «Нет» counts only next to the app or the store: «телеграм не работает, потому что нет впн» is not about the store.
@@ -675,7 +790,9 @@ def apps_answer(question: str, history: list) -> str | None:
             if re.search(r'без приложени|веб.?верси|web.?верси', text) else ''
         )
         return prefix + APP_STORE_REGION_HELP
-    platforms = [platform for platform, pattern in _PLATFORMS.items() if re.search(pattern, text)] or list(CLIENTS)
+    platforms = [platform for platform, pattern in _PLATFORMS.items() if re.search(pattern, text)]
+    if not platforms:
+        return 'Подойдут Incy и Happ — они есть для ' + ', '.join(list(CLIENTS)[:-1]) + f' и {list(CLIENTS)[-1]}.'
     return '\n'.join(f'{platform}: {", ".join(CLIENTS[platform])}.' for platform in platforms)
 
 
@@ -720,7 +837,9 @@ def paid_access_request(question: str) -> bool:
     paid = bool(re.search(r'оплатил|оплач|заплатил|(?:оплат\w*|плат[её]ж).*(?:произвед|прош[её]л|прошла|соверш)|деньги.*спис', text))
     access = bool(re.search(r'включ|активир|доступ|не работ|не подключ|не продл|ист[её]к|не обнов|0\s*дн|нет.*подпис', text))
     installation = bool(re.search(r'установ|скач|app\s*store|апп.?стор', text))
-    return paid and access and not installation and not is_topup_without_renewal(question)
+    # «Ваш ещё месяц проплачен, а не работает» is a VPN failure: no payment check, no receipt.
+    return (paid and access and not installation and not is_topup_without_renewal(question)
+            and not paid_period_complaint(question))
 
 
 _ON_TOPIC = re.compile(
@@ -882,7 +1001,7 @@ def deduplicate_answer(answer: str) -> str:
 
 
 def unsupported_price(answer: str, question: str, catalog: str) -> bool:
-    if not re.search(r'стоит|стоимост|цен[ауы]|поч[её]м', question, re.IGNORECASE):
+    if not re.search(r'стоит|стоимост|цен[ауы]|поч[её]м\b', question, re.IGNORECASE):
         return False
 
     def amounts(text):

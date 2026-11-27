@@ -109,7 +109,9 @@ def test_balancers_are_skipped():
     assert not [r for r in records if 'Авто выбор' in r.name]
     # «Авто выбор» в образце всегда 0 — без пропуска блок показывал бы сбой
     block = ss.format_status_block(_status(records), now=T0)
-    assert 'Авто' not in block
+    # The balancers are not listed as servers; the block only explains them to the model (2026-11-27).
+    assert not [line for line in block.splitlines() if line.startswith('•') and 'Авто' in line]
+    assert 'балансировщик, мониторинг его не показывает' in block
     assert 'не отвечает' not in block
 
 
@@ -206,7 +208,8 @@ def test_block_for_healthy_sample():
     assert _line_for(block, 'Белые списки') == '• Белые списки: Белые списки, Белые списки #2 — работают'
     assert 'медленно отвечает: USA' in _line_for(block, 'США')
     assert 'мобильного оператора' in block
-    assert len(block) < 1500
+    # +~360 characters since 2026-11-27: the «Авто выбор» hint and the «Авто выбор Белые списки» note.
+    assert len(block) < 1700
 
 
 # ---------------------------------------------------------------- сбои
@@ -704,7 +707,9 @@ def test_whitelist_note_offers_whitelist_servers_for_mobile_only_failures():
     block = _sample_block('На мобильном интернете не работает, на Wi-Fi работает')
     note = next(line for line in block.splitlines() if line.startswith('«Белые списки»'))
     assert 'только на мобильном интернете' in note
-    assert 'предложи переключиться на сервер «Белые списки» или «Белые списки #2»' in note
+    # First the balancer over the whitelist servers; the servers themselves only on request or when it did not help.
+    assert 'предложи «Авто выбор Белые списки»' in note
+    assert '«Белые списки» и «Белые списки #2» — только если клиент спросил о них или это не помогло' in note
     assert 'обновить подписку в приложении' in note and 'передай команде' in note
     # Wi‑Fi and ordinary failures still do not get them.
     assert 'При обычных сбоях, медленной работе и на Wi‑Fi их не советуй' in note
@@ -716,6 +721,7 @@ def test_policy_offers_whitelist_servers_only_for_mobile_internet():
 
     rule = next(line for line in SUPPORT_POLICY.splitlines() if line.startswith('Обход белых списков'))
     assert 'только на мобильном интернете' in rule
-    assert 'переключиться на сервер «Белые списки» (или «Белые списки #2»)' in rule
+    assert 'предложи выбрать «Авто выбор Белые списки»' in rule
+    assert '«Белые списки» и «Белые списки #2» называй, только если клиент спрашивает о них' in rule
     assert 'передай обращение' in rule
     assert 'На Wi-Fi и при обычных сбоях их не советуй' in rule

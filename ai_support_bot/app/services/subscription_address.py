@@ -140,6 +140,37 @@ _ADDRESS_NEWS = re.compile(
     r'|(?:прислал\w*|присла\w*|пришл\w*|рассылк\w*|сообщени\w*|уведомлени\w*|написал\w*)[^.!?\n]{0,80}?'
     r'(?:перевыпуст|обнов\w*\s+(?:\w+\s+)?подписк)'
 )
+# «Нужно поменять адрес», «пришло уведомление … адрес», «пришла инструкция по обновлению Happ»: the mailing in other words.
+# An e-mail address is another question: these two only count without e-mail words in the message.
+_ADDRESS_CHANGE = re.compile(r'(?:поменять|сменить|изменить|обновить)\s+(?:\w+\s+){0,2}?(?:адрес|домен)')
+_MAILING = re.compile(
+    r'(?:пришл|прислал|присла|рассылк|сообщени|уведомлени|смс|sms|инструкци)\w*[^.!?\n]{0,80}?'
+    r'(?:адрес|домен|обновлени\w*\s+(?:happ|incy|хапп\w*|инси|подписк|ссылк)|обнов\w*\s+(?:\w+\s+)?(?:happ|incy|хапп\w*|инси))'
+)
+_EMAIL_WORDS = re.compile(r'почт|email|e-mail|электрон|ящик')
+# «И то, что по последним смс, я не могу сделать»: the steps from the mailing did not work out.
+_BY_MESSAGES = re.compile(
+    r'по\s+(?:последн|вчерашн|недавн|ваш|прошл|нов)\w*\s+(?:смс|sms|сообщени|уведомлени|рассылк|инструкци)\w*'
+)
+_UNABLE = re.compile(
+    r'не\s+(?:могу|можем|получа\w*|выход\w*|вышл\w*|удаётся|удается|удал\w*|смог\w*|понимаю|понял\w*|работа\w*|помог\w*)'
+)
+# «Я сделал всё по ней, но не получается» right after «пришла инструкция по обновлению»: the same mailing.
+_REFERS_BACK = re.compile(
+    r'по\s+(?:ней|нему|инструкци\w*|шагам|этой\s+инструкци\w*)|как\s+(?:там\s+|в\s+ней\s+)?(?:написан|сказан)\w*'
+    r'|сделал\w*\s+(?:вс[её]|как)'
+)
+
+
+def _address_news(text: str) -> bool:
+    if _ADDRESS_NEWS.search(text):
+        return True
+    if not _EMAIL_WORDS.search(text) and (_ADDRESS_CHANGE.search(text) or _MAILING.search(text)):
+        return True
+    # A login code by SMS is not the mailing.
+    return bool(_BY_MESSAGES.search(text) and _UNABLE.search(text)) and not re.search(r'\bкод\w*', text)
+
+
 # «Хочу новую ссылку, кто-то пользуется моей подпиской»: a real reissue, not the move.
 _REISSUE_WISH = re.compile(
     r'чуж\w*\s+(?:устройств|подключ|человек|люд|телефон)|кто[\s-]?то\s+(?:ещ[её]\s+|другой\s+)?(?:подключ|пользу|сидит|зашел|зашёл)'
@@ -157,6 +188,14 @@ _REFRESH_ERROR = re.compile(
     r'|нет\s+(?:ни\s+одного\s+|доступных\s+|никаких\s+)?(?:серверов|ни\s+одного\s+сервера)|серверов\s+(?:\w+\s+){0,2}?нет\b'
     # All servers gone, not one: «сервер Нидерланды пропал» is a server question for the live status.
     r'|сервер(?:ы|а)\s+(?:\w+\s+)?(?:пропал|исчез)\w*|(?:пропал|исчез)\w*\s+(?:все\s+)?сервер(?:ы|а)\b'
+)
+# «В приложении пропали страны для выбора», «нет стран», «страны исчезли»: the whole list is gone, like the servers.
+# One country gone («пропала локация Германия») or «каких стран нет?» is a server question for the live status.
+_COUNTRIES_GONE = re.compile(
+    r'(?:пропал|исчез)\w*\s+(?:все\s+)?(?:страны|локации)\b|(?:страны|локации)\s+(?:\w+\s+){0,2}?(?:пропал|исчез)\w*'
+    r'|^\W*(?:(?:а|у\s+меня|теперь|сейчас|почему|в\s+приложении)\s+)*нет\s+(?:ни\s+одной\s+страны|никаких\s+стран|стран|локаций)\b\W*$'
+    r'|(?:приложени\w*|happ|incy|хапп\w*|инси|списк\w*)\s+(?:\w+\s+)?нет\s+(?:ни\s+одной\s+страны|никаких\s+стран|стран|локаций)\b'
+    r'|нет\s+(?:ни\s+одной\s+страны|никаких\s+стран|стран|локаций)\s+(?:для\s+выбора|в\s+(?:приложени|списк|happ|incy))'
 )
 _TIMEOUT = re.compile(r'тайм-?аут|timed?\s*-?\s*out')
 _CONNECTING = re.compile(r'подключ|соедин|\bconnect(?:ing|ion)?\b')
@@ -253,24 +292,27 @@ _DISPUTE = re.compile(
 )
 
 
-def address_problem(question: str) -> str | None:
+def address_problem(question: str, context: str = '') -> str | None:
     """Why the question is about the moved address: 'news', 'refresh' or 'stale'; None when it is not.
 
     'news' — the mailing, the domains, «вы сменили адрес»; 'refresh' — the app cannot refresh the subscription;
     'stale' — after a renewal the device still shows the old subscription.
+    ``context`` — the customer's previous messages: «сделал всё по ней, не получается» after the mailing is 'news'.
     """
     text = (question or '').casefold()
     if not text.strip():
         return None
-    if _ADDRESS_NEWS.search(text):
+    if _address_news(text):
         return 'news'
     if _REISSUE_WISH.search(text):
         return None
     if _ADDRESS_HINT.search(text):
         return 'news'
+    if context and _REFERS_BACK.search(text) and _UNABLE.search(text) and _address_news((context or '').casefold()):
+        return 'news'
     if _own_data_stale(text):
         return None
-    if _refresh_error(text) or (_REFRESH_FAILED.search(text) and not _APP_UPDATE.search(text)):
+    if _refresh_error(text) or (_REFRESH_FAILED.search(text) and not _APP_UPDATE.search(text)) or _COUNTRIES_GONE.search(text):
         return 'refresh'
     if _NOT_AVAILABLE.search(text) and (len(text) <= 30 or _EVERY_SERVER.search(text)):
         return 'refresh'

@@ -65,7 +65,8 @@ def test_other_promo_questions_stay_with_the_agent(question):
 @pytest.mark.parametrize('question', ['Уже несколько дней не работает VPN', 'Уже 4 или пятый день не работает телеграмм'])
 def test_multi_day_outage_handoff_carries_one_quick_step(question):
     assert handoff_answer('diagnostics_failed', question) == NOTICE + '\n\n' + OUTAGE_STEP
-    assert '«Белые списки»' in OUTAGE_STEP
+    # Since 2026-11-27 the quick step is the balancer: «Авто выбор», on mobile internet «Авто выбор Белые списки».
+    assert '«Авто выбор»' in OUTAGE_STEP and '«Авто выбор Белые списки»' in OUTAGE_STEP
 
 
 def test_handoff_after_tried_steps_has_no_extra_advice():

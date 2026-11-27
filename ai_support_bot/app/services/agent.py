@@ -29,10 +29,13 @@ from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
 from ai_support_bot.app.services.response_rules import (
     APP_STORE_REGION_HELP,
+    AUTO_SELECT_ANSWER,
     HAPP_RECOVERY,
     NOTICE,
+    PAYMENT_TROUBLE_ANSWER,
     SUPPORT_SCOPE_ANSWER,
     apps_answer,
+    auto_select_only,
     blank_page_answer,
     boundary_answer,
     cannot_provide_payment_details,
@@ -52,7 +55,9 @@ from ai_support_bot.app.services.response_rules import (
     money_dispute_topic,
     neutral_self_reference,
     paid_access_request,
+    paid_period_complaint,
     payment_next_step,
+    payment_trouble,
     region_help_given,
     repeated_answer,
     repeated_clarification,
@@ -105,8 +110,16 @@ _SERIOUS_REASONS = {
 }
 # Never under a cancellation, refund or disputed charge.
 _PAYMENT_BUTTONS = {'renew', 'buy', 'topup'}
-_LEAD_EMOJI = {'apps': '🚀', 'recovery': '🛡', 'navigation': '🌐', 'wheel': '🎁'}
+_LEAD_EMOJI = {'apps': '🚀', 'recovery': '🛡', 'navigation': '🌐', 'wheel': '🎁', 'auto_select': '🛡'}
 _PAYMENT_TOOLS = {'check_paid_access', 'check_subscription_renewal'}
+# Set for one turn: the model must not open a payment check (and its receipt requests) for these messages.
+_NOT_A_PAYMENT_CHECK = {
+    '_paid_period_complaint': ('Клиент жалуется на работу VPN, подписка уже оплачена: это не проверка оплаты. '
+                               'Проведи диагностику по правилу «Сбой VPN», чек не проси.'),
+    '_payment_trouble': ('Клиент не может оплатить: это проблема самой оплаты, а не пропавший платёж. Чек не проси: '
+                         'подскажи открыть оплату в обычном браузере, попробовать другой способ (СБП, карта; в боте — '
+                         'пополнение баланса через Telegram Stars) и прислать скриншот ошибки.'),
+}
 _PAYMENT_CLAIM = re.compile(
     r'плат|списа|деньг|чек|выписк|квитанц|транзакц|пополн|купил|купл|покупк|заказ|перев[её]л|внес|внёс|средств'
     r'|руб|₽|зачт|зачисл|засчит|сбп|stars|зв[её]зд',
@@ -437,8 +450,11 @@ class SupportAgent:
             messages.append({'role': 'assistant', 'content': result.get('content') or None, 'tool_calls': calls})
             for call in calls:
                 function = call.get('function') or {}
+                blocked = next((note for flag, note in _NOT_A_PAYMENT_CHECK.items() if state.get(flag)), None)
                 if executed >= 4:
                     output = {'error': 'Лимит вызовов исчерпан. Ответь по собранным данным или передай обращение.'}
+                elif function.get('name') in _PAYMENT_TOOLS and blocked:
+                    output = {'error': blocked}
                 elif function.get('name') in _PAYMENT_TOOLS and not _payment_claimed(evidence) and (
                     not with_image or _TECH_ISSUE.search(evidence)
                 ):
@@ -663,9 +679,18 @@ class SupportAgent:
             support_state.pop('renewal_verification', None)
             if support_state.get('issue') in {'payment_activation', 'payment_missing'}:
                 support_state['issue'] = 'other'
+        # «Работает только на автовыборе» is the working setup, not a failed round of diagnostics.
+        auto_only = not image_url and not waiting and auto_select_only(question, history)
+        if auto_only and forced_reason == 'diagnostics_failed':
+            forced_reason = None
+        # «Ваш ещё месяц проплачен, а не работает»: a VPN failure, not a payment check with a receipt request.
+        # «Почему не могу оплатить?»: the payment itself fails, nothing to look for by a receipt.
+        not_a_payment_check = {'_paid_period_complaint': paid_period_complaint(question), '_payment_trouble': payment_trouble(question)}
+        if any(not_a_payment_check.values()) and support_state.get('issue') == 'payment_activation' and not support_state.get('renewal_verification'):
+            support_state['issue'] = 'other'
         recovery_answer = None
         recovery_state = dict(support_state)
-        if not image_url and forced_reason in {None, 'diagnostics_failed'} and support_state.get('issue') != 'payment_missing' and not is_payment_missing(question):
+        if not image_url and not auto_only and forced_reason in {None, 'diagnostics_failed'} and support_state.get('issue') != 'payment_missing' and not is_payment_missing(question):
             candidate, recovery_reason = happ_recovery_step(question, history, recovery_state)
             if candidate and (forced_reason is None or candidate == HAPP_RECOVERY):
                 recovery_answer, forced_reason = candidate, None
@@ -682,7 +707,8 @@ class SupportAgent:
             source_status = (support_state.get('service_source') or {}).get('status')
             payment_case = forced_reason is None and source_status not in {'foreign', 'conflict'} and paid_claim(
                 question, pending=bool(support_state.get('renewal_verification')))
-            address_kind = address_problem(question)
+            # «Сделал всё по ней, не получается» refers to the mailing from the previous messages.
+            address_kind = address_problem(question, ' '.join(item.content or '' for item in history[-4:] if item.role == 'user'))
             if image_url and address_kind == 'stale':
                 address_kind = None  # a receipt or an app screen with dates: the model reads the photo first
             if payment_case or address_kind:
@@ -698,8 +724,13 @@ class SupportAgent:
         scope_answer = boundary_answer(question)
         # «Белый экран» after a renew button is a page that did not load, not a VPN failure.
         page_answer = None if forced_reason else blank_page_answer(question, history)
-        direct_answer = (None if forced_reason else scope_answer) or page_answer or rule_text or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
-        direct_kind = None if not direct_answer or direct_answer == scope_answer else 'recovery' if direct_answer == recovery_answer else 'navigation' if direct_answer == page_answer else 'address' if direct_answer == rule_text else 'apps'
+        auto_answer = AUTO_SELECT_ANSWER if auto_only and not forced_reason else None
+        # «Почему не могу оплатить?» without a photo: the browser and the other payment methods, not a receipt.
+        pay_answer = PAYMENT_TROUBLE_ANSWER if not_a_payment_check['_payment_trouble'] and not forced_reason and not image_url else None
+        direct_answer = (None if forced_reason else scope_answer) or page_answer or rule_text or auto_answer or pay_answer or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
+        kinds = ((scope_answer, None), (page_answer, 'navigation'), (rule_text, 'address'), (auto_answer, 'auto_select'),
+                 (pay_answer, 'payment_help'), (recovery_answer, 'recovery'))
+        direct_kind = None if not direct_answer else next((kind for text, kind in kinds if text and direct_answer == text), 'apps')
         if direct_answer and support_state.get('issue') == 'payment_activation':
             support_state = {'issue': 'other'}
         if direct_kind == 'address' and (support_state.get('renewal_verification') or support_state.get('issue') == 'payment_missing'):
@@ -892,6 +923,7 @@ class SupportAgent:
             evidence += '\n' + '\n'.join(
                 line for line in user_context.splitlines() if line.startswith('Email аккаунта:')
             )
+            support_state.update({flag: True for flag, on in not_a_payment_check.items() if on})
             result = await self._complete_with_tools(
                 messages=messages, model=model, max_tokens=max_tokens, temperature=temperature,
                 telegram_id=telegram_id, state=support_state, evidence=evidence, enable_tools=not smalltalk,
@@ -1034,7 +1066,7 @@ class SupportAgent:
             buttons = answer_buttons.build(['connect'], user_context)
         # With every subscription ended, troubleshooting steps cannot help: say so and offer the renewal.
         recent_question = ' '.join([item.content or '' for item in history[-2:] if item.role == 'user'] + [question])
-        if not (serious or escalate or renewal_wish or money_case or address_rule) and not _WORKS_SOMEWHERE.search(recent_question) and (
+        if not (serious or escalate or renewal_wish or money_case or address_rule) and direct_kind != 'payment_help' and not _WORKS_SOMEWHERE.search(recent_question) and (
             starts_technical_issue(question) or re.search(
                 r'не\s+(?:работа|подключ|устанавлива|грузит|загружа|открыва|соедин)|перестал\w*\s+(?:работ|подключ|грузит|открыва)'
                 r'|сломал|отвалил|stopped\s+working|not\s+working|doesn.?t\s+work|can.?t\s+connect',
@@ -1077,6 +1109,8 @@ class SupportAgent:
         support_state.pop('_tariff_question', None)
         support_state.pop('_renewal_request', None)
         support_state.pop('_account_data', None)
+        for flag in _NOT_A_PAYMENT_CHECK:
+            support_state.pop(flag, None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
         support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []
