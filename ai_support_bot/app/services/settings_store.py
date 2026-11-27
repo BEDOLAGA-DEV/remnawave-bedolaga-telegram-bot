@@ -55,6 +55,8 @@ def _base_defaults() -> dict[str, Any]:
         'SERVICE_CATALOG_ENABLED': '1' if settings.SERVICE_CATALOG_ENABLED else '0',
         'SERVICE_CATALOG_TTL': str(settings.SERVICE_CATALOG_TTL),
         'SERVICE_CATALOG_MAX_CHARS': str(settings.SERVICE_CATALOG_MAX_CHARS),
+        # Devices, subscription fetches and the last connection from the panel (services/connection_data.py).
+        'CONNECTION_DATA_ENABLED': '1',
     }
 
 

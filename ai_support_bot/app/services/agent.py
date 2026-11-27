@@ -71,7 +71,7 @@ from ai_support_bot.app.services.response_rules import (
     unsupported_price,
     wheel_reward_request,
 )
-from ai_support_bot.app.services import server_status
+from ai_support_bot.app.services import connection_data, server_status
 from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
 from ai_support_bot.app.services.service_identity import (
     official_service_reference,
@@ -488,6 +488,7 @@ class SupportAgent:
         catalog: str = '',
         status: str = '',
         language: str = '',
+        connection: str = '',
     ) -> str:
         configured_prompt = settings_store.get('SYSTEM_PROMPT')
         policy_header = 'Актуальные правила SligVPN (приоритет над устаревшими примерами и настройками промпта):'
@@ -534,6 +535,8 @@ class SupportAgent:
 
         if user_context:
             blocks.append('<user_data>\nДанные текущего пользователя:\n' + user_context + '\n</user_data>')
+        if connection:
+            blocks.append(connection)
         if language:
             blocks.append(language)
         return '\n\n'.join(blocks)
@@ -842,6 +845,7 @@ class SupportAgent:
         navigation_block = ''
         catalog_block = ''
         status_block = ''
+        connection_block = ''
         if not smalltalk and not forced_reason and not direct_answer:
             navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
             if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци|устройств|девайс|price|cost|plan|tariff|device|subscription|how\s+much', question, re.IGNORECASE):
@@ -850,10 +854,16 @@ class SupportAgent:
             recent_user = ' '.join(item.content or '' for item in history[-2:] if item.role == 'user')
             if server_status.status_relevant(question, recent_user):
                 status_block = await server_status.build_status_block(question)
+            # The customer's own devices, app fetches and last connection: failures and device questions only.
+            # A payment check gets its templated answer after the model, so the panel is not asked for it.
+            payment_check = support_state.get('renewal_verification') or support_state.get('issue') in {'payment_missing', 'payment_activation'}
+            if not payment_check and connection_data.connection_relevant(question, recent_user):
+                connection_block = await connection_data.build_block(user_context)
 
         system_prompt = self._build_system_prompt(
             knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block, status=status_block,
             language='Клиент пишет не по-русски: ответь на его языке (обычно английском). Названия кнопок и разделов оставь как в интерфейсе, в кавычках.' if _foreign_language(question) else '',
+            connection=connection_block,
         )
         if smalltalk:
             system_prompt = (
