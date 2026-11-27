@@ -14,6 +14,9 @@ def device_action(query: str) -> str | None:
         return None
     if re.search(r'(?:добав|подключ)\w*\s+(?:трафик|автоплат|автопродл)', text):
         return None
+    # «Какие устройства у меня подключены?» asks for the list, not for the connection page.
+    if re.search(r'(?:какие|сколько|список|посмотр\w*|покажи\w*)\b[^.?!]{0,30}устройств[^.?!]{0,30}(?:подключ[её]н|у\s+меня|сейчас|занят|мои)', text):
+        return 'full'
     occupancy = device_occupancy(text)
     if occupancy and occupancy[0] < occupancy[1] and re.search(r'нужн\w* ли.*(?:докуп|плат)|зачем.*докуп', text):
         return 'connect'

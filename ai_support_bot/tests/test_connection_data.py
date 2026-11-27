@@ -598,3 +598,22 @@ async def test_switched_off_flag_keeps_the_agent_working(flow, monkeypatch):  # 
     await _send(agent_mod, Session, 'Не работает впн')
     assert captured['prompts'] and BLOCK_HEAD not in captured['prompts'][-1]
     assert not panel.calls
+
+
+# The customer's own device list goes to the model with the panel data, not to the «Подключить устройство» page.
+@pytest.mark.parametrize(('question', 'expected'), [
+    ('Какие устройства у меня подключены?', True),
+    ('Сколько устройств у меня сейчас подключено?', True),
+    ('Покажите мои устройства', True),
+    ('Сколько устройств входит в тариф?', False),
+    ('Как подключить ещё одно устройство?', False),
+    ('Хочу подключить телевизор', False),
+])
+def test_own_device_list_question(question, expected):
+    from ai_support_bot.app.navigation.query import device_action as nav_device_action
+    from ai_support_bot.app.services import answer_buttons
+
+    assert answer_buttons.device_list_question(question) is expected
+    if expected:
+        assert answer_buttons.device_action(question) == 'devices'
+        assert nav_device_action(question) in {'full', None}

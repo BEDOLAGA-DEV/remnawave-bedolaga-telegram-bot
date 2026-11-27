@@ -765,7 +765,9 @@ class SupportAgent:
             direct_answer, direct_kind = (ACK_ANSWER_EN if _foreign_language(question) else ACK_ANSWER), None
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
             direct_answer = 'Анализ изображений сейчас отключён. Опишите, что показано на фото, и какую проблему нужно решить.'
-        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED') and not _SERVICE_REGION_BLOCK.search(question):
+        # «Какие устройства у меня подключены?» is answered from the panel data by the model, not by a menu path.
+        own_devices = answer_buttons.device_list_question(question) and connection_data.enabled()
+        if not forced_reason and not direct_answer and not image_url and not own_devices and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED') and not _SERVICE_REGION_BLOCK.search(question):
             nav_query = build_nav_query(question, history, summary)
             if is_topup_without_renewal(question):
                 surface = navigation_tool.resolve_surface(nav_query)

@@ -151,10 +151,28 @@ def renew_answer(rows: list[list[dict]]) -> str:
 _DEVICE = re.compile(r'устройств|девайс|телевизор|\bтв\b|ноутбук|компьютер|планшет|ipad|айпад|macbook|макбук', re.IGNORECASE)
 
 
+_DEVICE_LIST = re.compile(
+    r'(?:какие|какое|сколько|список|посмотр\w*|узнать|видно|покажи\w*|проверить)\b[^.?!]{0,30}устройств[^.?!]{0,30}'
+    r'(?:подключ[её]н|у\s+меня|сейчас|занят|мои|в\s+подписк)'
+    r'|(?:мои|у\s+меня)\s+(?:\w+\s+)?устройств\w*\s*(?:подключ[её]н|\?|$)',
+    re.IGNORECASE,
+)
+
+
+def device_list_question(question: str) -> bool:
+    """«Какие устройства у меня подключены?», «сколько устройств сейчас подключено» — the customer's own list.
+
+    «Подключены» here is a state, not a request to connect one more; «сколько устройств входит в тариф» is a tariff question.
+    """
+    return bool(_DEVICE_LIST.search(question or ''))
+
+
 def device_action(question: str) -> str | None:
     """«Добавить/подключить ещё одно устройство» → connect; «удалить, лимит, превышено» → the device list."""
     if not _DEVICE.search(question or ''):
         return None
+    if device_list_question(question):
+        return 'devices'
     if re.search(r'удал|сброс|отвяз|лимит|превыш|максимальн', question, re.IGNORECASE):
         return 'devices'
     if re.search(r'добав|подключ|ещ[её]|втор|нов|друг', question, re.IGNORECASE):
