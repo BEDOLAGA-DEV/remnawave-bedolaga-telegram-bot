@@ -384,7 +384,9 @@ async def test_cannot_pay_gets_the_browser_and_other_methods(flow, monkeypatch):
     assert not captured['prompts']
     assert result['model'] == 'rules' and not result['escalate']
     assert PAYMENT_TROUBLE_ANSWER.splitlines()[0] in result['answer']  # the bot link becomes an anchor later
-    assert 'обычном браузере' in result['answer'] and 'СБП' in result['answer'] and 'Telegram Stars' in result['answer']
+    assert 'обычном браузере' in result['answer'] and 'СБП' in result['answer']
+    # Owner 27.11: the bot has the same payment methods as the site.
+    assert 'те же способы, что и на сайте' in result['answer']
     assert 'чек' not in result['answer']
 
 
