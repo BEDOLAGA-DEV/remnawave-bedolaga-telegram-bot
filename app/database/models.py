@@ -4560,7 +4560,15 @@ class Ticket(Base):
 
     # Связи
     user = relationship('User', backref='tickets')
-    messages = relationship('TicketMessage', back_populates='ticket', cascade='all, delete-orphan')
+    # Порядок задан явно: без ORDER BY PostgreSQL отдаёт строки в порядке их
+    # размещения в таблице, и новое сообщение, записанное на освободившееся
+    # место, показывается в переписке раньше старых.
+    messages = relationship(
+        'TicketMessage',
+        back_populates='ticket',
+        cascade='all, delete-orphan',
+        order_by='[TicketMessage.created_at, TicketMessage.id]',
+    )
 
     @property
     def is_open(self) -> bool:
