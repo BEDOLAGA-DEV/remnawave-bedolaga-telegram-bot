@@ -4480,6 +4480,9 @@
 - `tests/database/test_telegram_user_filters_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_traffic_filter_returns_exact_people_for_every_sort`, `test_api_total_matches_filters_and_ignores_pagination`, `test_empty_api_tables_have_zero_total`, `test_traffic_filter_excludes_overdue_subscription_before_status_update`, `test_traffic_row_ignores_stale_subscription_with_higher_usage`
+- `tests/database/test_ticket_messages_order_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_ticket_messages_load_oldest_first_whatever_the_row_placement`
 - `tests/database/test_topup_classic_cart_postgres.py` — Python-модуль
   Классы: `CartStorage` (6 методов)
   Функции: `cart_service`, `test_topup_finalizer_purchases_selected_classic`
